@@ -10,16 +10,10 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 # ----------------- 处理消息的函数 -----------------
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    chat_type = chat.type  # 消息来源类型
-    chat_id = chat.id
-
-    if chat_type == "private":
-        await update.message.reply_text(f"你好，{chat.username or '用户'}！")
-    elif chat_type in ["group", "supergroup"]:
-        await context.bot.send_message(chat_id=chat_id, text=f"大家好，这里是群组 {chat.title}！")
-    elif chat_type == "channel":
-        await context.bot.send_message(chat_id=chat_id, text=f"欢迎关注频道 {chat.title}！")
+    user = update.effective_user
+    # 获取用户昵称或全名
+    full_name = f"{user.first_name} {user.last_name}".strip()
+    await update.message.reply_text(f"你好，{full_name}！")
 
 # ----------------- 创建 Web 服务器以监听端口 -----------------
 
