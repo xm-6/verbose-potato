@@ -1,7 +1,8 @@
 import os
 import asyncio
 from aiohttp import web
-from telegram import Update, ParseMode
+from telegram import Update
+from telegram.constants import ParseMode
 from telegram.ext import Application, MessageHandler, CommandHandler, filters, ContextTypes
 
 # 从环境变量中读取 Telegram Token
