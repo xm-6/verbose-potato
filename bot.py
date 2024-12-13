@@ -5,7 +5,7 @@ import os
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 
 # 初始化机器人
-updater = Updater(TELEGRAM_TOKEN, use_context=True)
+updater = Updater(TELEGRAM_TOKEN)
 
 # 处理消息
 def handle_message(update, context):
