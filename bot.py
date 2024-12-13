@@ -42,7 +42,7 @@ async def start_web_server():
 
 # ----------------- 主函数 -----------------
 
-async def run_bot():
+async def main():
     # 初始化 Telegram Application
     application = Application.builder().token(TELEGRAM_TOKEN).build()
 
@@ -50,16 +50,11 @@ async def run_bot():
     message_handler = MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
     application.add_handler(message_handler)
 
-    # 启动 Telegram Bot
-    await application.run_polling()
-
-
-async def main():
-    # 启动 Web 服务
-    await start_web_server()
-
-    # 启动 Telegram Bot
-    await run_bot()
+    # 启动 Web 服务和 Telegram Bot
+    await asyncio.gather(
+        start_web_server(),  # 启动 Web 服务监听端口
+        application.run_polling()  # 启动 Telegram Bot
+    )
 
 
 if __name__ == "__main__":
