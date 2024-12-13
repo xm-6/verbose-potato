@@ -7,6 +7,7 @@ from telegram.ext import Application, MessageHandler, filters, ContextTypes
 # 从环境变量中读取 Telegram Token
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 
+
 # ----------------- 处理消息的函数 -----------------
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -41,10 +42,7 @@ async def start_web_server():
 
 # ----------------- 主函数 -----------------
 
-async def main():
-    # 启动 Web 服务器
-    await start_web_server()
-
+async def run_bot():
     # 初始化 Telegram Application
     application = Application.builder().token(TELEGRAM_TOKEN).build()
 
@@ -52,11 +50,25 @@ async def main():
     message_handler = MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
     application.add_handler(message_handler)
 
-    # 启动机器人（使用 Long Polling）
+    # 启动 Telegram Bot
     await application.run_polling()
 
 
-# ----------------- 程序入口 -----------------
+async def main():
+    # 启动 Web 服务
+    await start_web_server()
+
+    # 启动 Telegram Bot
+    await run_bot()
+
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # 显式设置 asyncio 事件循环，防止冲突
+    try:
+        asyncio.run(main())
+    except RuntimeError as e:
+        if "already running" in str(e):
+            loop = asyncio.get_event_loop()
+            loop.run_until_complete(main())
+        else:
+            raise
