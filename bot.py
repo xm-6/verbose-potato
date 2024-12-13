@@ -1,4 +1,4 @@
-from telegram.ext import Updater, MessageHandler, Filters, filters
+from telegram.ext import Updater, MessageHandler, filters
 
 # 从环境变量中读取 Telegram Token
 import os
