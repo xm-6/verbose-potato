@@ -1,4 +1,4 @@
-from telegram.ext import Updater, MessageHandler, Filters
+from telegram.ext import Updater, MessageHandler, Filters, filters
 
 # 从环境变量中读取 Telegram Token
 import os
@@ -22,7 +22,7 @@ def handle_message(update, context):
 
 # 注册消息处理器
 dispatcher = updater.dispatcher
-dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
+dispatcher.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
 # 启动机器人
 updater.start_polling()
