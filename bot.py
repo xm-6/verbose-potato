@@ -7,7 +7,6 @@ from telegram.ext import Application, MessageHandler, filters, ContextTypes
 # 从环境变量中读取 Telegram Token
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 
-
 # ----------------- 处理消息的函数 -----------------
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -21,7 +20,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=chat_id, text=f"大家好，这里是群组 {chat.title}！")
     elif chat_type == "channel":
         await context.bot.send_message(chat_id=chat_id, text=f"欢迎关注频道 {chat.title}！")
-
 
 # ----------------- 创建 Web 服务器以监听端口 -----------------
 
@@ -39,7 +37,6 @@ async def start_web_server():
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
 
-
 # ----------------- 主函数 -----------------
 
 async def main():
@@ -53,17 +50,32 @@ async def main():
     # 启动 Web 服务和 Telegram Bot
     await asyncio.gather(
         start_web_server(),  # 启动 Web 服务监听端口
-        application.run_polling()  # 启动 Telegram Bot
+        application.initialize()  # 初始化 Telegram Application
     )
 
+    # 独立启动 run_polling（非阻塞）
+    await application.start()
+    await application.updater.start_polling()
+
+    # 等待终止信号
+    try:
+        await asyncio.Future()  # 保持程序运行
+    finally:
+        await application.updater.stop()
+        await application.stop()
+
+# ----------------- 显式管理事件循环 -----------------
 
 if __name__ == "__main__":
-    # 显式设置 asyncio 事件循环，防止冲突
     try:
-        asyncio.run(main())
+        # 设置事件循环，兼容 Render 环境
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(main())
     except RuntimeError as e:
         if "already running" in str(e):
-            loop = asyncio.get_event_loop()
-            loop.run_until_complete(main())
+            print("事件循环已在运行，跳过重复启动。")
         else:
             raise
+    except Exception as e:
+        print(f"程序启动失败: {e}")
