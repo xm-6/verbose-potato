@@ -2,7 +2,7 @@ import os
 import asyncio
 import requests  # 用于访问用户的 API
 from aiohttp import web
-from telegram import Update, ParseMode
+from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 from apscheduler.schedulers.asyncio import AsyncIOScheduler  # 定时任务
 
