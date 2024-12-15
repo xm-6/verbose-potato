@@ -1,5 +1,6 @@
 import os
 import logging
+import asyncio  # 确保导入了 asyncio 库
 import requests
 import json
 from io import BytesIO
