@@ -105,6 +105,10 @@ async def main():
     # 初始化 Telegram 应用
     application = Application.builder().token(TELEGRAM_TOKEN).build()
 
+    # 删除现有 Webhook 配置
+    await application.bot.delete_webhook(drop_pending_updates=True)
+    print("已清除旧的 Webhook 配置。")
+
     # 注册处理器
     application.add_handler(CommandHandler("addapi", add_api))
     application.add_handler(CommandHandler("removeapi", remove_api))
