@@ -236,6 +236,9 @@ async def check_api_updates():
 
 # 启动应用
 async def main():
+    loop = asyncio.get_event_loop()  # 获取事件循环
+    loop.create_task(check_api_updates())  # 创建异步任务
+
     app = ApplicationBuilder().token(token).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("add_api", add_api))
@@ -246,10 +249,8 @@ async def main():
 
     global bot
     bot = Bot(token=token)
-    
+
     # 启动后台任务
-    loop.create_task(check_api_updates())
-    
     await app.run_polling()
 
 if __name__ == "__main__":
