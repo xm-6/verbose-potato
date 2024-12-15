@@ -77,66 +77,32 @@ async def remove_api(update: Update, context):
         else:
             await update.message.reply_text("无效编号。")
 
-# ============ 动态解析与发送内容 ============
+# ============ API 更新处理函数 ============
 
-async def download_file(url):
-    """下载文件并返回内容"""
+async def handle_api_update(request):
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as resp:
-                if resp.status == 200:
-                    return await resp.read()
-                else:
-                    logger.error(f"下载失败：{url}，状态码：{resp.status}")
+        data = await request.json()
+        logger.info(f"收到的 API 更新数据：{data}")
+        # 可以在此处解析和处理收到的 API 数据
+        return web.Response(text="更新已收到")
     except Exception as e:
-        logger.error(f"下载文件失败：{e}")
-    return None
+        logger.error(f"处理 API 更新时出错：{e}")
+        return web.Response(text="处理失败", status=500)
 
-async def parse_and_send_content(application, chat_id, raw_data, content_type):
-    """根据数据类型解析并发送消息"""
+# ============ Telegram Webhook 处理函数 ============
+
+async def telegram_webhook_handler(request):
+    """处理 Telegram Webhook 更新"""
     try:
-        if content_type == "application/json":
-            data = json.loads(raw_data)
-        elif content_type in ["application/xml", "text/xml"]:
-            root = ET.fromstring(raw_data)
-            data = {child.tag: child.text for child in root}
-        elif content_type in ["text/html", "text/plain"]:
-            data = {"content": raw_data}
-        else:
-            data = {"raw_data": raw_data}
-
-        await format_and_send(application, chat_id, data)
+        update_data = await request.json()
+        logger.info(f"收到 Telegram 更新数据：{update_data}")
+        application = request.app["application"]
+        update = Update.de_json(update_data, application.bot)
+        await application.process_update(update)
+        return web.Response(text="OK")
     except Exception as e:
-        logger.error(f"解析数据失败：{e}")
-        await application.bot.send_message(chat_id=chat_id, text="数据解析失败，请稍后再试。")
-
-async def format_and_send(application, chat_id, data):
-    """格式化数据并发送，支持图片、视频、文本等"""
-    message_parts = []
-    media_sent = False
-
-    for key, value in data.items():
-        if isinstance(value, str) and value.startswith("http"):
-            if any(value.endswith(ext) for ext in [".jpg", ".jpeg", ".png"]):
-                file_content = await download_file(value)
-                if file_content:
-                    await application.bot.send_photo(
-                        chat_id=chat_id,
-                        photo=file_content,
-                        caption=f"<b>{key}</b>",
-                        parse_mode=ParseMode.HTML
-                    )
-                    media_sent = True
-            elif any(value.endswith(ext) for ext in [".mp4", ".mov"]):
-                await application.bot.send_video(chat_id=chat_id, video=value, caption=f"<b>{key}</b>", parse_mode=ParseMode.HTML)
-                media_sent = True
-            else:
-                message_parts.append(f"<b>{key}:</b> {value}")
-        else:
-            message_parts.append(f"<b>{key}:</b> {value}")
-
-    if message_parts and not media_sent:
-        await application.bot.send_message(chat_id=chat_id, text="\n".join(message_parts), parse_mode=ParseMode.HTML)
+        logger.error(f"处理 Telegram 更新时出错：{e}")
+        return web.Response(text="处理失败", status=500)
 
 # ============ 定时轮询与主动推送 ============
 
@@ -164,18 +130,6 @@ async def check_and_notify(application, chat_id, api, session):
     except Exception as e:
         logger.error(f"轮询出错：{api['url']} 错误：{e}")
 
-# ============ API 更新处理函数 ============
-
-async def handle_api_update(request):
-    try:
-        data = await request.json()
-        logger.info(f"收到的 API 更新数据：{data}")
-        # 可以在此处解析和处理收到的 API 数据
-        return web.Response(text="更新已收到")
-    except Exception as e:
-        logger.error(f"处理 API 更新时出错：{e}")
-        return web.Response(text="处理失败", status=500)
-
 # ============ 主程序入口 ============
 
 async def main():
@@ -189,11 +143,12 @@ async def main():
     application.add_handler(CommandHandler("removeapi", remove_api))
 
     await application.bot.delete_webhook()
-    await application.bot.set_webhook(WEBHOOK_URL)
+    await application.bot.set_webhook(WEBHOOK_URL + "/telegram_webhook")
 
     app = web.Application()
+    app.router.add_post("/telegram_webhook", telegram_webhook_handler)
     app.router.add_post("/api_update", handle_api_update)
-    app['application'] = application
+    app["application"] = application
 
     scheduler.add_job(poll_apis, "interval", seconds=3600, args=[application])
     scheduler.start()
