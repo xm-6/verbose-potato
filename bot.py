@@ -1,19 +1,19 @@
 import os
 import asyncio
-import requests
 from aiohttp import web
-from telegram import Update, Chat
+from telegram import Update
 from telegram.constants import ParseMode
-from telegram.ext import Application, CommandHandler, MessageHandler, filters
+from telegram.ext import Application, CommandHandler
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+import requests
 
-# 从环境变量中获取配置
+# 从环境变量读取 Token 和 Webhook URL
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
-PORT = int(os.getenv("PORT", 8443))  # Render 动态分配端口
+PORT = int(os.getenv("PORT", 8443))  # Render 提供动态端口，默认为 8443
 
-# 用户数据存储：支持群组和私聊
-user_data = {}  # {user_id: {"apis": [{"url": "API链接", "last_seen": "上次获取的最新数据ID/时间"}]}}
+# 用户数据存储：支持多用户独立 API 管理
+user_data = {}
 
 # 定时任务调度器
 scheduler = AsyncIOScheduler()
@@ -38,21 +38,20 @@ async def help_command(update: Update, context):
 
 async def add_api(update: Update, context):
     """添加用户的 API"""
-    chat = update.effective_chat
-    user = update.effective_user
+    chat_id = update.effective_chat.id
 
     if len(context.args) != 1:
         await update.message.reply_text("请使用正确的格式：/addapi <API链接>")
         return
 
     api_link = context.args[0]
-    user_data.setdefault(chat.id, {"apis": []})["apis"].append({"url": api_link, "last_seen": None})
+    user_data.setdefault(chat_id, {"apis": []})["apis"].append({"url": api_link, "last_seen": None})
     await update.message.reply_text(f"成功添加 API：{api_link}")
 
 async def list_api(update: Update, context):
     """列出用户的所有 API"""
-    chat = update.effective_chat
-    apis = user_data.get(chat.id, {}).get("apis", [])
+    chat_id = update.effective_chat.id
+    apis = user_data.get(chat_id, {}).get("apis", [])
 
     if not apis:
         await update.message.reply_text("你还没有添加任何 API。")
@@ -64,13 +63,14 @@ async def list_api(update: Update, context):
 
 async def remove_api(update: Update, context):
     """删除用户的 API"""
-    chat = update.effective_chat
+    chat_id = update.effective_chat.id
+
     if len(context.args) != 1 or not context.args[0].isdigit():
         await update.message.reply_text("请使用正确的格式：/removeapi <编号>")
         return
 
     api_index = int(context.args[0]) - 1
-    apis = user_data.get(chat.id, {}).get("apis", [])
+    apis = user_data.get(chat_id, {}).get("apis", [])
 
     if 0 <= api_index < len(apis):
         removed = apis.pop(api_index)
@@ -113,14 +113,23 @@ async def send_message(chat_id, message):
 
 async def handle_webhook(request):
     """处理 Telegram Webhook 请求"""
-    try:
-        data = await request.json()
-        update = Update.de_json(data, bot_context.bot)
-        await bot_context.process_update(update)
-        return web.Response(text="OK")
-    except Exception as e:
-        print(f"Webhook 处理失败：{e}")
-        return web.Response(text=f"Error: {e}", status=500)
+    if request.method == 'GET':
+        # 返回简单响应，供测试
+        return web.Response(text="Webhook is active!")
+
+    if request.method == 'POST':
+        try:
+            data = await request.json()
+            print(f"收到的 Webhook 数据：{data}")
+            update = Update.de_json(data, bot_context.bot)
+            await bot_context.process_update(update)
+            return web.Response(text="OK")
+        except Exception as e:
+            print(f"Webhook 处理失败：{e}")
+            return web.Response(text=f"Error: {e}", status=500)
+
+    # 对其他方法返回 405 错误
+    return web.Response(status=405, text="Method Not Allowed")
 
 # ----------------- 主程序 -----------------
 
@@ -128,18 +137,22 @@ async def main():
     global bot_context
     bot_context = Application.builder().token(TELEGRAM_TOKEN).build()
 
+    # 注册命令
     bot_context.add_handler(CommandHandler("start", start_command))
     bot_context.add_handler(CommandHandler("help", help_command))
     bot_context.add_handler(CommandHandler("addapi", add_api))
     bot_context.add_handler(CommandHandler("listapi", list_api))
     bot_context.add_handler(CommandHandler("removeapi", remove_api))
 
+    # 设置 Webhook
     await bot_context.bot.delete_webhook()
     await bot_context.bot.set_webhook(WEBHOOK_URL)
 
+    # 启动定时任务
     scheduler.add_job(poll_apis, "interval", seconds=10)
     scheduler.start()
 
+    # 设置 Webhook 路由
     app = web.Application()
     app.router.add_post("/", handle_webhook)
 
@@ -148,10 +161,8 @@ async def main():
     site = web.TCPSite(runner, "0.0.0.0", PORT)
     await site.start()
 
+    print(f"服务器已启动，监听端口：{PORT}")
     await asyncio.Event().wait()
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except Exception as e:
-        print(f"程序运行失败：{e}")
+    asyncio.run(main())
