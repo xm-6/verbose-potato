@@ -164,6 +164,18 @@ async def check_and_notify(application, chat_id, api, session):
     except Exception as e:
         logger.error(f"轮询出错：{api['url']} 错误：{e}")
 
+# ============ API 更新处理函数 ============
+
+async def handle_api_update(request):
+    try:
+        data = await request.json()
+        logger.info(f"收到的 API 更新数据：{data}")
+        # 可以在此处解析和处理收到的 API 数据
+        return web.Response(text="更新已收到")
+    except Exception as e:
+        logger.error(f"处理 API 更新时出错：{e}")
+        return web.Response(text="处理失败", status=500)
+
 # ============ 主程序入口 ============
 
 async def main():
