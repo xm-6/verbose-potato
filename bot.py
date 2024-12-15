@@ -1,6 +1,6 @@
 import os
 import logging
-import asyncio  # 确保导入了 asyncio 库
+import asyncio
 import requests
 import json
 from io import BytesIO
@@ -202,4 +202,4 @@ async def main():
     await app.run_polling()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()  # 直接调用 main()，不使用 asyncio.run()
