@@ -1,5 +1,4 @@
 import os
-import asyncio
 import logging
 import requests
 import json
@@ -185,60 +184,8 @@ def save_last_state(user_id, api_name, data):
             session.add(state)
         session.commit()
 
-# 检查 API 更新
-async def check_api_updates():
-    while True:
-        await asyncio.sleep(60)
-        with Session() as session:
-            apis = session.query(UserAPI).all()
-            for api in apis:
-                try:
-                    response = requests.get(api.api_url)
-                    if response.status_code == 200:
-                        last_state = get_last_state(api.user_id, api.api_name)
-                        content_type = response.headers.get('Content-Type', '').lower()
-                        if 'image' in content_type:
-                            if response.content != last_state:
-                                image = Image.open(BytesIO(response.content))
-                                bio = BytesIO()
-                                bio.name = f"{api.api_name}.png"
-                                image.save(bio, 'PNG')
-                                bio.seek(0)
-                                await bot.send_photo(chat_id=api.user_id, photo=bio, caption=f"API {api.api_name} 更新的图片")
-                                save_last_state(api.user_id, api.api_name, response.content)
-                        elif 'video' in content_type:
-                            if response.content != last_state:
-                                bio = BytesIO(response.content)
-                                bio.name = f"{api.api_name}.mp4"
-                                await bot.send_video(chat_id=api.user_id, video=bio, caption=f"API {api.api_name} 更新的视频")
-                                save_last_state(api.user_id, api.api_name, response.content)
-                        elif 'audio' in content_type:
-                            if response.content != last_state:
-                                bio = BytesIO(response.content)
-                                bio.name = f"{api.api_name}.mp3"
-                                await bot.send_audio(chat_id=api.user_id, audio=bio, caption=f"API {api.api_name} 更新的音频")
-                                save_last_state(api.user_id, api.api_name, response.content)
-                        elif 'application' in content_type or 'octet-stream' in content_type:
-                            if response.content != last_state:
-                                bio = BytesIO(response.content)
-                                bio.name = f"{api.api_name}_file"
-                                await bot.send_document(chat_id=api.user_id, document=bio, caption=f"API {api.api_name} 更新的文件")
-                                save_last_state(api.user_id, api.api_name, response.content)
-                        elif 'text' in content_type or 'json' in content_type:
-                            data = response.json() if 'json' in content_type else response.text
-                            if data != last_state:
-                                await bot.send_message(chat_id=api.user_id, text=f"API {api.api_name} 有新更新:\n{json.dumps(data, indent=2) if isinstance(data, dict) else data}")
-                                save_last_state(api.user_id, api.api_name, data)
-                        else:
-                            logger.warning(f"未知内容类型: {content_type}")
-                except Exception as e:
-                    logger.error(f"调用 API {api.api_name} 失败: {e}")
-
 # 启动应用
 async def main():
-    loop = asyncio.get_event_loop()  # 获取事件循环
-    loop.create_task(check_api_updates())  # 创建异步任务
-
     app = ApplicationBuilder().token(token).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("add_api", add_api))
@@ -250,7 +197,7 @@ async def main():
     global bot
     bot = Bot(token=token)
 
-    # 启动后台任务
+    # 启动 Telegram Bot 的轮询
     await app.run_polling()
 
 if __name__ == "__main__":
