@@ -3,6 +3,7 @@ import asyncio
 from aiohttp import web
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
+import signal
 
 # 环境变量：从 Render 或本地读取
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -90,6 +91,11 @@ async def health_check(request):
 
 # ----------------- 主程序 -----------------
 
+def shutdown():
+    loop = asyncio.get_event_loop()
+    loop.stop()
+    print("事件循环已强制关闭！")
+
 async def main():
     """主程序入口"""
     # 检查环境变量
@@ -136,6 +142,10 @@ async def main():
     await runner.cleanup()
 
 if __name__ == "__main__":
+    # 注册信号处理器，确保事件循环正确关闭
+    signal.signal(signal.SIGINT, lambda s, f: shutdown())
+    signal.signal(signal.SIGTERM, lambda s, f: shutdown())
+
     # 检查事件循环状态并运行主程序
     try:
         loop = asyncio.get_event_loop()
