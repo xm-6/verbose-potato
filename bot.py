@@ -15,10 +15,8 @@ user_data = {}
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    # 获取用户昵称或全名
     full_name = f"{user.first_name} {user.last_name}".strip()
 
-    # 检查用户是否注册了 API
     if user.id not in user_data or not user_data[user.id]['apis']:
         await update.message.reply_text(
             "你好！欢迎使用本机器人！\n\n"
@@ -30,7 +28,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # 显示已添加的 API
     content = "以下是你已添加的 API 列表：\n"
     for idx, api in enumerate(user_data[user.id]['apis'], start=1):
         content += f"{idx}. {api}\n"
@@ -47,7 +44,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(formatted_content, parse_mode=ParseMode.HTML)
 
-# 处理 /addapi 命令
 async def add_api(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
 
@@ -62,7 +58,6 @@ async def add_api(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_data[user.id]['apis'].append(api_link)
     await update.message.reply_text(f"成功添加 API：{api_link}")
 
-# 处理 /removeapi 命令
 async def remove_api(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
 
@@ -82,7 +77,6 @@ async def remove_api(update: Update, context: ContextTypes.DEFAULT_TYPE):
     removed_api = user_data[user.id]['apis'].pop(api_index)
     await update.message.reply_text(f"成功删除 API：{removed_api}")
 
-# 处理 /listapi 命令
 async def list_api(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
 
@@ -96,7 +90,6 @@ async def list_api(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(content)
 
-# 处理 /help 命令
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "欢迎使用本机器人！以下是可用命令：\n"
@@ -109,37 +102,20 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ----------------- 创建 Web 服务器以监听端口 -----------------
 
 async def health_check(request):
-    """健康检查端点，Render 平台会期望监听一个端口"""
     return web.Response(text="OK")
 
-async def start_web_server():
-    """启动 Web 服务器以满足 Render 平台对端口监听的要求"""
-    port = int(os.getenv("PORT", 8080))  # Render 会通过 PORT 环境变量分配端口
-    app = web.Application()
-    app.router.add_get("/", health_check)  # 健康检查接口
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", port)
-    await site.start()
-
-# ----------------- 主函数 -----------------
-
 async def main():
-    # 初始化 Telegram Application
     application = Application.builder().token(TELEGRAM_TOKEN).build()
 
-    # 注册命令处理器和消息处理器
     application.add_handler(CommandHandler("addapi", add_api))
     application.add_handler(CommandHandler("removeapi", remove_api))
     application.add_handler(CommandHandler("listapi", list_api))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    # 获取 Webhook 的 URL
     webhook_url = os.getenv("WEBHOOK_URL")
 
     try:
-        # 启动 Webhook（Render 平台推荐）
         await application.run_webhook(
             listen="0.0.0.0",
             port=int(os.getenv("PORT", 8443)),
@@ -152,15 +128,10 @@ async def main():
         else:
             raise
 
-# ----------------- 显式管理事件循环 -----------------
-
 if __name__ == "__main__":
     try:
-        # 创建并设置新的事件循环（Render 平台兼容）
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-
-        # 运行主程序
         loop.run_until_complete(main())
     except RuntimeError as e:
         if "already running" in str(e):
