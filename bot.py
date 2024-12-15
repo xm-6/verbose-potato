@@ -3,7 +3,7 @@ import logging
 import requests
 import json
 from io import BytesIO
-from telegram import Update, Bot
+from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackContext
 from PIL import Image
 from fastapi import FastAPI, Request
@@ -26,7 +26,7 @@ if not webhook_url:
 user_apis = {}
 
 # 初始化 Bot 实例
-bot = Bot(token=token)
+app = ApplicationBuilder().token(token).build()
 
 # Telegram Bot 逻辑
 async def start(update: Update, context: CallbackContext) -> None:
@@ -164,16 +164,22 @@ async def head():
 # 设置 webhook 处理逻辑
 @app.post("/webhook")
 async def webhook(request: Request):
+    # 获取请求的 JSON 数据
     payload = await request.json()
-    update = Update.de_json(payload, bot)
-    await bot.process_update(update)
+    
+    # 使用 Application 类处理更新
+    update = Update.de_json(payload, app.bot)
+    
+    # 使用 Application 处理更新
+    await app.process_update(update)
+    
     return {"status": "ok"}
 
 # 启动 FastAPI 和 Telegram Bot
 if __name__ == "__main__":
     # 设置 Webhook URL
     webhook_url = os.getenv('WEBHOOK_URL', 'https://your-app-name.onrender.com/webhook')  # 获取部署后的 URL
-    asyncio.run(bot.set_webhook(url=webhook_url))
+    asyncio.run(app.bot.set_webhook(url=webhook_url))
     
     # 启动 Uvicorn 服务器
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv('PORT', 8000)))  # 使用 Render 提供的端口
