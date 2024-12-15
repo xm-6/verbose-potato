@@ -130,9 +130,9 @@ async def send_message(application, chat_id, message):
 # Webhook 路由处理函数
 async def handle_webhook(request):
     if request.method == 'GET':
+        # 用于手动访问检查
         return web.Response(text="Webhook is active!")
-
-    if request.method == 'POST':
+    elif request.method == 'POST':
         try:
             data = await request.json()
             logger.info(f"收到的 Webhook 数据：{data}")
@@ -142,8 +142,8 @@ async def handle_webhook(request):
         except Exception as e:
             logger.error(f"Webhook 处理失败：{e}")
             return web.Response(text=f"Error: {e}", status=500)
-
-    return web.Response(status=405, text="Method Not Allowed")
+    else:
+        return web.Response(status=405, text="Method Not Allowed")
 
 # 主程序
 async def main():
@@ -156,7 +156,7 @@ async def main():
     application.add_handler(CommandHandler("listapi", list_api))
     application.add_handler(CommandHandler("removeapi", remove_api))
 
-    # 设置 Webhook
+    # 删除旧 webhook 并设置新 webhook
     await application.bot.delete_webhook()
     await application.bot.set_webhook(WEBHOOK_URL)
     logger.info(f"Webhook 已设置为：{WEBHOOK_URL}")
@@ -172,6 +172,8 @@ async def main():
 
     # 设置 aiohttp 应用
     app = web.Application()
+    # 同时支持 GET 和 POST
+    app.router.add_get("/webhook", handle_webhook)
     app.router.add_post("/webhook", handle_webhook)
     app['application'] = application
 
