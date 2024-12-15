@@ -3,7 +3,6 @@ import asyncio
 from aiohttp import web
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
-import signal
 
 # 环境变量：从 Render 或本地读取
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -91,11 +90,6 @@ async def health_check(request):
 
 # ----------------- 主程序 -----------------
 
-def shutdown():
-    loop = asyncio.get_event_loop()
-    loop.stop()
-    print("事件循环已强制关闭！")
-
 async def main():
     """主程序入口"""
     # 检查环境变量
@@ -111,48 +105,40 @@ async def main():
     # 初始化 Telegram 应用
     application = Application.builder().token(TELEGRAM_TOKEN).build()
 
-    # 删除现有 Webhook 配置
-    await application.bot.delete_webhook(drop_pending_updates=True)
-    print("已清除旧的 Webhook 配置。")
+    try:
+        # 删除现有 Webhook 配置
+        await application.bot.delete_webhook(drop_pending_updates=True)
+        print("已清除旧的 Webhook 配置。")
 
-    # 注册处理器
-    application.add_handler(CommandHandler("addapi", add_api))
-    application.add_handler(CommandHandler("removeapi", remove_api))
-    application.add_handler(CommandHandler("listapi", list_api))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+        # 注册处理器
+        application.add_handler(CommandHandler("addapi", add_api))
+        application.add_handler(CommandHandler("removeapi", remove_api))
+        application.add_handler(CommandHandler("listapi", list_api))
+        application.add_handler(CommandHandler("help", help_command))
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    # 健康检查服务
-    app = web.Application()
-    app.router.add_get("/", health_check)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", PORT)
-    await site.start()
+        # 健康检查服务
+        app = web.Application()
+        app.router.add_get("/", health_check)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, "0.0.0.0", PORT)
+        await site.start()
 
-    # 启动 Webhook
-    async with application:
-        await application.run_webhook(
-            listen="0.0.0.0",
-            port=PORT,
-            webhook_url=WEBHOOK_URL,
-        )
-
-    # 停止健康检查服务
-    await runner.cleanup()
+        # 启动 Webhook
+        async with application:
+            await application.run_webhook(
+                listen="0.0.0.0",
+                port=PORT,
+                webhook_url=WEBHOOK_URL,
+            )
+    finally:
+        print("正在清理资源...")
+        await application.shutdown()
+        await application.stop()
 
 if __name__ == "__main__":
-    # 注册信号处理器，确保事件循环正确关闭
-    signal.signal(signal.SIGINT, lambda s, f: shutdown())
-    signal.signal(signal.SIGTERM, lambda s, f: shutdown())
-
-    # 检查事件循环状态并运行主程序
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            print("事件循环已在运行，直接使用当前循环...")
-            loop.create_task(main())
-        else:
-            asyncio.run(main())
+        asyncio.run(main())
     except Exception as e:
         print(f"程序启动失败: {e}")
