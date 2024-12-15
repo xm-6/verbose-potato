@@ -86,10 +86,10 @@ async def health_check(request):
 # ----------------- 主程序 -----------------
 
 async def main():
-    # 初始化 Telegram Bot
+    """主程序入口"""
     application = Application.builder().token(TELEGRAM_TOKEN).build()
 
-    # 注册处理器
+    # 添加命令处理器
     application.add_handler(CommandHandler("addapi", add_api))
     application.add_handler(CommandHandler("removeapi", remove_api))
     application.add_handler(CommandHandler("listapi", list_api))
@@ -97,21 +97,37 @@ async def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     # 启动 Webhook
-    webhook_url = WEBHOOK_URL
+    webhook_url = os.getenv("WEBHOOK_URL")
     print(f"启动 Webhook，URL: {webhook_url}")
-    await application.run_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        webhook_url=webhook_url,
-    )
 
-    # 启动健康检查服务
-    app = web.Application()
-    app.router.add_get("/", health_check)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", PORT)
-    await site.start()
+    try:
+        await application.run_webhook(
+            listen="0.0.0.0",
+            port=int(os.getenv("PORT", 8443)),
+            url_path="",
+            webhook_url=webhook_url,
+        )
+    except RuntimeError as e:
+        if "already running" in str(e):
+            print("事件循环已在运行，跳过重复启动。")
+        else:
+            raise
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        # 检查是否有事件循环在运行
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                print("事件循环已在运行，直接使用当前循环。")
+                loop.run_until_complete(main())
+            else:
+                print("创建新事件循环...")
+                loop.run_until_complete(main())
+        except RuntimeError:
+            print("没有事件循环，创建新的事件循环...")
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(main())
+    except Exception as e:
+        print(f"程序启动失败: {e}")
