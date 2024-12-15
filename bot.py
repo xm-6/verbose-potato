@@ -7,7 +7,6 @@ from telegram import Update, Chat
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackContext
 from fastapi import FastAPI, Request
 import uvicorn
-import asyncio
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
@@ -22,7 +21,6 @@ if not webhook_url:
     raise ValueError("Webhook URL is not set in environment variables")
 
 # 数据存储结构
-# 分别存储用户、群组和频道的 API 绑定
 api_store = {
     "users": {},  # 每个用户的数据，键是 user_id
     "groups": {},  # 每个群组的数据，键是 group_id
@@ -35,19 +33,18 @@ application = ApplicationBuilder().token(token).build()
 # Telegram Bot 命令逻辑
 async def start(update: Update, context: CallbackContext) -> None:
     chat_type = update.effective_chat.type
-    welcome_text = (
-        "欢迎使用 Telegram 机器人！\n"
-        "支持以下功能：\n"
-        "- 添加、调用、删除 API\n"
-        "- 群组和频道支持（需管理员权限）\n"
-        "发送 /help 查看详细命令列表。"
-    )
     if chat_type == Chat.PRIVATE:
-        await update.message.reply_text(welcome_text)
+        await update.message.reply_text(
+            "欢迎使用 Telegram 机器人！支持绑定 API 并调用。\n"
+            "发送 /help 查看详细命令列表。"
+        )
     elif chat_type in [Chat.GROUP, Chat.SUPERGROUP]:
-        await update.message.reply_text("我是群组助手，可以绑定和调用 API。\n管理员可以使用 /help 查看命令。")
+        await update.message.reply_text(
+            "我是群组助手，可以帮助您绑定和调用 API。\n"
+            "管理员可使用 /help 查看命令。"
+        )
     elif chat_type == Chat.CHANNEL:
-        await update.message.reply_text("在频道中我可以处理事件，请将我设置为管理员。")
+        await update.message.reply_text("我是频道助手，请将我设置为管理员以启用功能。")
 
 async def help(update: Update, context: CallbackContext) -> None:
     help_text = (
@@ -185,10 +182,6 @@ async def check_admin(update: Update, context: CallbackContext) -> bool:
 # FastAPI 设置
 app = FastAPI()
 
-@app.get("/")
-async def root():
-    return {"message": "Welcome to the bot webhook server!"}
-
 @app.post("/webhook")
 async def webhook(request: Request):
     try:
@@ -208,5 +201,8 @@ application.add_handler(CommandHandler("call_api", call_api))
 application.add_handler(CommandHandler("list_apis", list_apis))
 
 if __name__ == "__main__":
-    asyncio.run(application.bot.set_webhook(url=webhook_url))
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv('PORT', 8000)))
+    application.run_webhook(
+        listen="0.0.0.0",
+        port=int(os.getenv("PORT", 8000)),
+        webhook_url=webhook_url
+    )
