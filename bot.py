@@ -1,56 +1,34 @@
 import os
 import logging
-import asyncio
 import requests
 import json
 from io import BytesIO
 from telegram import Update, Bot
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackContext
-from sqlalchemy import create_engine, Column, Integer, String
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
 from PIL import Image
+from fastapi import FastAPI, Request
+from threading import Thread
+import uvicorn
 
 # 配置日志
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-# 数据库模型和配置
-Base = declarative_base()
-
-class UserAPI(Base):
-    __tablename__ = "user_apis"
-    id = Column(Integer, primary_key=True)
-    user_id = Column(String, nullable=False)
-    api_name = Column(String, nullable=False)
-    api_url = Column(String, nullable=False)
-
-class GroupSettings(Base):
-    __tablename__ = "group_settings"
-    id = Column(Integer, primary_key=True)
-    group_id = Column(String, nullable=False)
-    blocked_api = Column(String, nullable=True)
-
-class APIState(Base):
-    __tablename__ = "api_states"
-    id = Column(Integer, primary_key=True)
-    user_id = Column(String, nullable=False)
-    api_name = Column(String, nullable=False)
-    last_data = Column(String, nullable=True)
-
-# 从环境变量读取 Bot Token 和数据库连接
+# 从环境变量读取 Bot Token 和 Webhook URL
 token = os.getenv("YOUR_BOT_TOKEN")
+webhook_url = os.getenv("WEBHOOK_URL")
 if not token:
     raise ValueError("Bot token is not set in environment variables")
+if not webhook_url:
+    raise ValueError("Webhook URL is not set in environment variables")
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///bot.db")
-db_engine = create_engine(DATABASE_URL)
-Base.metadata.create_all(db_engine)
-Session = sessionmaker(bind=db_engine)
+# 存储 API 绑定的字典（内存替代数据库）
+user_apis = {}
+group_settings = {}
 
 # Telegram Bot 逻辑
 async def start(update: Update, context: CallbackContext) -> None:
-    await update.message.reply_text("欢迎使用电报机器人！输入 /add_api 绑定 API，/remove_api 删除 API，/block_api 和 /unblock_api 管理群组屏蔽。")
+    await update.message.reply_text("欢迎使用电报机器人！输入 /add_api 绑定 API，/remove_api 删除 API，/call_api 调用 API，/block_api 和 /unblock_api 管理群组屏蔾。")
 
 async def add_api(update: Update, context: CallbackContext) -> None:
     args = context.args
@@ -58,10 +36,13 @@ async def add_api(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text("用法: /add_api <名称> <API_URL>")
         return
     name, api_url = args[0], args[1]
-    with Session() as session:
-        new_api = UserAPI(user_id=str(update.effective_user.id), api_name=name, api_url=api_url)
-        session.add(new_api)
-        session.commit()
+    user_id = str(update.effective_user.id)
+    
+    # 保存 API 绑定（在内存中）
+    if user_id not in user_apis:
+        user_apis[user_id] = {}
+    
+    user_apis[user_id][name] = api_url
     await update.message.reply_text(f"API {name} 已绑定！")
 
 async def remove_api(update: Update, context: CallbackContext) -> None:
@@ -71,14 +52,13 @@ async def remove_api(update: Update, context: CallbackContext) -> None:
         return
     name = args[0]
     user_id = str(update.effective_user.id)
-    with Session() as session:
-        api = session.query(UserAPI).filter_by(user_id=user_id, api_name=name).first()
-        if api:
-            session.delete(api)
-            session.commit()
-            await update.message.reply_text(f"API {name} 已移除！")
-        else:
-            await update.message.reply_text(f"未找到名为 {name} 的 API！")
+
+    # 移除 API 绑定（在内存中）
+    if user_id in user_apis and name in user_apis[user_id]:
+        del user_apis[user_id][name]
+        await update.message.reply_text(f"API {name} 已移除！")
+    else:
+        await update.message.reply_text(f"未找到名为 {name} 的 API！")
 
 async def call_api(update: Update, context: CallbackContext) -> None:
     args = context.args
@@ -87,49 +67,53 @@ async def call_api(update: Update, context: CallbackContext) -> None:
         return
     name = args[0]
     user_id = str(update.effective_user.id)
-    with Session() as session:
-        api = session.query(UserAPI).filter_by(user_id=user_id, api_name=name).first()
-        if not api:
-            await update.message.reply_text(f"未找到名为 {name} 的 API！")
-            return
-        response = requests.get(api.api_url)
-        if response.status_code == 200:
-            try:
-                content_type = response.headers.get('Content-Type', '').lower()
-                if 'image' in content_type:
-                    # 推送图片
-                    image = Image.open(BytesIO(response.content))
-                    bio = BytesIO()
-                    bio.name = f"{name}.png"
-                    image.save(bio, 'PNG')
-                    bio.seek(0)
-                    await context.bot.send_photo(chat_id=user_id, photo=bio, caption=f"API {name} 返回的图片")
-                elif 'video' in content_type:
-                    # 推送视频
-                    bio = BytesIO(response.content)
-                    bio.name = f"{name}.mp4"
-                    await context.bot.send_video(chat_id=user_id, video=bio, caption=f"API {name} 返回的视频")
-                elif 'audio' in content_type:
-                    # 推送音频
-                    bio = BytesIO(response.content)
-                    bio.name = f"{name}.mp3"
-                    await context.bot.send_audio(chat_id=user_id, audio=bio, caption=f"API {name} 返回的音频")
-                elif 'application' in content_type or 'octet-stream' in content_type:
-                    # 推送文件
-                    bio = BytesIO(response.content)
-                    bio.name = f"{name}_file"
-                    await context.bot.send_document(chat_id=user_id, document=bio, caption=f"API {name} 返回的文件")
-                elif 'text' in content_type or 'json' in content_type:
-                    # 处理文本或 JSON
-                    data = response.json() if 'json' in content_type else response.text
-                    await update.message.reply_text(f"API 返回:\n{json.dumps(data, indent=2) if isinstance(data, dict) else data}")
-                else:
-                    await update.message.reply_text(f"未知内容类型: {content_type}")
-            except Exception as e:
-                await update.message.reply_text(f"API 数据处理失败: {str(e)}")
-        else:
-            await update.message.reply_text(f"API 调用失败，状态码: {response.status_code}")
 
+    # 获取 API URL（从内存中）
+    if user_id not in user_apis or name not in user_apis[user_id]:
+        await update.message.reply_text(f"未找到名为 {name} 的 API！")
+        return
+    
+    api_url = user_apis[user_id][name]
+    response = requests.get(api_url)
+    
+    if response.status_code == 200:
+        try:
+            content_type = response.headers.get('Content-Type', '').lower()
+            if 'image' in content_type:
+                # 推送图片
+                image = Image.open(BytesIO(response.content))
+                bio = BytesIO()
+                bio.name = f"{name}.png"
+                image.save(bio, 'PNG')
+                bio.seek(0)
+                await context.bot.send_photo(chat_id=update.effective_user.id, photo=bio, caption=f"API {name} 返回的图片")
+            elif 'video' in content_type:
+                # 推送视频
+                bio = BytesIO(response.content)
+                bio.name = f"{name}.mp4"
+                await context.bot.send_video(chat_id=update.effective_user.id, video=bio, caption=f"API {name} 返回的视频")
+            elif 'audio' in content_type:
+                # 推送音频
+                bio = BytesIO(response.content)
+                bio.name = f"{name}.mp3"
+                await context.bot.send_audio(chat_id=update.effective_user.id, audio=bio, caption=f"API {name} 返回的音频")
+            elif 'application' in content_type or 'octet-stream' in content_type:
+                # 推送文件
+                bio = BytesIO(response.content)
+                bio.name = f"{name}_file"
+                await context.bot.send_document(chat_id=update.effective_user.id, document=bio, caption=f"API {name} 返回的文件")
+            elif 'text' in content_type or 'json' in content_type:
+                # 处理文本或 JSON
+                data = response.json() if 'json' in content_type else response.text
+                await update.message.reply_text(f"API 返回:\n{json.dumps(data, indent=2) if isinstance(data, dict) else data}")
+            else:
+                await update.message.reply_text(f"未知内容类型: {content_type}")
+        except Exception as e:
+            await update.message.reply_text(f"API 数据处理失败: {str(e)}")
+    else:
+        await update.message.reply_text(f"API 调用失败，状态码: {response.status_code}")
+
+# 管理群组屏蔾
 async def block_api(update: Update, context: CallbackContext) -> None:
     if update.effective_chat.type != "group":
         await update.message.reply_text("此命令只能在群组中使用。")
@@ -140,15 +124,16 @@ async def block_api(update: Update, context: CallbackContext) -> None:
         return
     group_id = str(update.effective_chat.id)
     api_name = args[0]
-    with Session() as session:
-        blocked = session.query(GroupSettings).filter_by(group_id=group_id, blocked_api=api_name).first()
-        if not blocked:
-            new_block = GroupSettings(group_id=group_id, blocked_api=api_name)
-            session.add(new_block)
-            session.commit()
-            await update.message.reply_text(f"API {api_name} 已被屏蔽！")
-        else:
-            await update.message.reply_text(f"API {api_name} 已经在屏蔽列表中！")
+
+    if group_id not in group_settings:
+        group_settings[group_id] = {}
+
+    # 将 API 名称加入到屏蔾列表
+    if api_name not in group_settings[group_id]:
+        group_settings[group_id][api_name] = "blocked"
+        await update.message.reply_text(f"API {api_name} 已被屏蔾！")
+    else:
+        await update.message.reply_text(f"API {api_name} 已经在屏蔾列表中！")
 
 async def unblock_api(update: Update, context: CallbackContext) -> None:
     if update.effective_chat.type != "group":
@@ -160,33 +145,38 @@ async def unblock_api(update: Update, context: CallbackContext) -> None:
         return
     group_id = str(update.effective_chat.id)
     api_name = args[0]
-    with Session() as session:
-        blocked = session.query(GroupSettings).filter_by(group_id=group_id, blocked_api=api_name).first()
-        if blocked:
-            session.delete(blocked)
-            session.commit()
-            await update.message.reply_text(f"API {api_name} 已解除屏蔽！")
-        else:
-            await update.message.reply_text(f"API {api_name} 不在屏蔽列表中！")
 
-# 获取并保存最后的数据状态
-def get_last_state(user_id, api_name):
-    with Session() as session:
-        state = session.query(APIState).filter_by(user_id=user_id, api_name=api_name).first()
-        return state.last_data if state else None
+    if group_id in group_settings and api_name in group_settings[group_id]:
+        del group_settings[group_id][api_name]
+        await update.message.reply_text(f"API {api_name} 已解除屏蔾！")
+    else:
+        await update.message.reply_text(f"API {api_name} 不在屏蔾列表中！")
 
-def save_last_state(user_id, api_name, data):
-    with Session() as session:
-        state = session.query(APIState).filter_by(user_id=user_id, api_name=api_name).first()
-        if state:
-            state.last_data = data
-        else:
-            state = APIState(user_id=user_id, api_name=api_name, last_data=data)
-            session.add(state)
-        session.commit()
+# FastAPI 设置 webhook
+app = FastAPI()
+
+@app.post("/webhook")
+async def webhook(request: Request):
+    payload = await request.json()
+    update = Update.de_json(payload, bot)
+    await app.bot.process_update(update)
+    return {"status": "ok"}
 
 # 启动应用
-async def main():
+def run():
+    # 启动 FastAPI 服务器
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+
+if __name__ == "__main__":
+    # 启动 FastAPI 线程
+    thread = Thread(target=run)
+    thread.start()
+
+    # 启动 Telegram Bot Webhook
+    bot = Bot(token=token)
+    bot.set_webhook(url=webhook_url)
+
+    # 启动 Telegram Bot 轮询
     app = ApplicationBuilder().token(token).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("add_api", add_api))
@@ -195,11 +185,5 @@ async def main():
     app.add_handler(CommandHandler("block_api", block_api))
     app.add_handler(CommandHandler("unblock_api", unblock_api))
 
-    global bot
-    bot = Bot(token=token)
-
-    # 启动 Telegram Bot 的轮询
-    await app.run_polling()
-
-if __name__ == "__main__":
-    main()  # 直接调用 main()，不使用 asyncio.run()
+    # 启动 Telegram Bot 轮询
+    app.run_polling()
