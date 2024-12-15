@@ -7,7 +7,6 @@ from telegram import Update, Bot
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackContext
 from PIL import Image
 from fastapi import FastAPI, Request
-from threading import Thread
 import uvicorn
 import asyncio
 
@@ -156,32 +155,14 @@ app = FastAPI()
 async def webhook(request: Request):
     payload = await request.json()
     update = Update.de_json(payload, bot)
-    await app.bot.process_update(update)
+    await bot.process_update(update)
     return {"status": "ok"}
 
-# 启动应用
-def run():
-    uvicorn.run(app, host="0.0.0.0", port=8000)
-
-# 设置 Webhook URL
-async def set_webhook():
-    await bot.set_webhook(url=webhook_url)
-
+# 启动 FastAPI 和 Telegram Bot
 if __name__ == "__main__":
-    # 启动 FastAPI 线程
-    thread = Thread(target=run)
-    thread.start()
-
-    # 异步调用 set_webhook
-    asyncio.run(set_webhook())  # 使用 asyncio.run 来运行 set_webhook
-
-    # 启动 Telegram Bot 处理命令
-    app = ApplicationBuilder().token(token).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", help))  # 添加 help 命令
-    app.add_handler(CommandHandler("add_api", add_api))
-    app.add_handler(CommandHandler("remove_api", remove_api))
-    app.add_handler(CommandHandler("call_api", call_api))
+    # 设置 Webhook URL
+    webhook_url = os.getenv('WEBHOOK_URL', 'https://your-app.onrender.com/webhook')  # 获取部署后的 URL
+    asyncio.run(bot.set_webhook(url=webhook_url))
     
-    # 启动 Telegram Bot 处理命令
-    app.run_polling()
+    # 启动 Uvicorn 服务器
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv('PORT', 8000)))  # 使用 Render 提供的端口
