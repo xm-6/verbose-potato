@@ -9,6 +9,7 @@ from PIL import Image
 from fastapi import FastAPI, Request
 from threading import Thread
 import uvicorn
+import asyncio
 
 # 配置日志
 logging.basicConfig(level=logging.DEBUG)
@@ -24,6 +25,9 @@ if not webhook_url:
 
 # 存储 API 绑定的字典（内存替代数据库）
 user_apis = {}
+
+# 初始化 Bot 实例
+bot = Bot(token=token)
 
 # Telegram Bot 逻辑
 async def start(update: Update, context: CallbackContext) -> None:
@@ -159,17 +163,16 @@ async def webhook(request: Request):
 def run():
     uvicorn.run(app, host="0.0.0.0", port=8000)
 
+# 设置 Webhook URL
 async def set_webhook():
-    bot = Bot(token=token)
-    await bot.set_webhook(url=webhook_url)  # 确保调用异步的 set_webhook 方法
+    await bot.set_webhook(url=webhook_url)
 
 if __name__ == "__main__":
     # 启动 FastAPI 线程
     thread = Thread(target=run)
     thread.start()
 
-    # 设置 Webhook URL
-    import asyncio
+    # 异步调用 set_webhook
     asyncio.run(set_webhook())  # 使用 asyncio.run 来运行 set_webhook
 
     # 启动 Telegram Bot 处理命令
