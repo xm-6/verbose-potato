@@ -151,10 +151,17 @@ async def call_api(update: Update, context: CallbackContext) -> None:
 # FastAPI 设置 webhook
 app = FastAPI()
 
+# 处理根路径请求
 @app.get("/")
 async def root():
     return {"message": "Welcome to the bot webhook server!"}
 
+# 处理 HEAD 请求，避免 405 错误
+@app.head("/")
+async def head():
+    return {"message": "HEAD request received"}
+
+# 设置 webhook 处理逻辑
 @app.post("/webhook")
 async def webhook(request: Request):
     payload = await request.json()
