@@ -132,7 +132,6 @@ async def main():
             webhook_url=WEBHOOK_URL,
         )
 
-# 程序入口
 if __name__ == "__main__":
     try:
         asyncio.run(main())
