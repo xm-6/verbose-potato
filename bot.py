@@ -3,15 +3,14 @@ import logging
 import requests
 import json
 from io import BytesIO
-from telegram import Update
+from telegram import Update, Chat
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackContext
-from PIL import Image
 from fastapi import FastAPI, Request
 import uvicorn
 import asyncio
 
 # 配置日志
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # 从环境变量读取 Bot Token 和 Webhook URL
@@ -22,26 +21,43 @@ if not token:
 if not webhook_url:
     raise ValueError("Webhook URL is not set in environment variables")
 
-# 存储 API 绑定的字典（内存替代数据库）
-user_apis = {}
+# 数据存储结构
+# 分别存储用户、群组和频道的 API 绑定
+api_store = {
+    "users": {},  # 每个用户的数据，键是 user_id
+    "groups": {},  # 每个群组的数据，键是 group_id
+    "channels": {}  # 每个频道的数据，键是 channel_id
+}
 
 # 初始化 Bot 实例
 application = ApplicationBuilder().token(token).build()
 
-# Telegram Bot 逻辑
+# Telegram Bot 命令逻辑
 async def start(update: Update, context: CallbackContext) -> None:
-    await update.message.reply_text("欢迎使用电报机器人！输入 /add_api 绑定 API，/remove_api 删除 API，/call_api 调用 API，/block_api 和 /unblock_api 管理群组屏蔾。")
+    chat_type = update.effective_chat.type
+    welcome_text = (
+        "欢迎使用 Telegram 机器人！\n"
+        "支持以下功能：\n"
+        "- 添加、调用、删除 API\n"
+        "- 群组和频道支持（需管理员权限）\n"
+        "发送 /help 查看详细命令列表。"
+    )
+    if chat_type == Chat.PRIVATE:
+        await update.message.reply_text(welcome_text)
+    elif chat_type in [Chat.GROUP, Chat.SUPERGROUP]:
+        await update.message.reply_text("我是群组助手，可以绑定和调用 API。\n管理员可以使用 /help 查看命令。")
+    elif chat_type == Chat.CHANNEL:
+        await update.message.reply_text("在频道中我可以处理事件，请将我设置为管理员。")
 
 async def help(update: Update, context: CallbackContext) -> None:
     help_text = (
-        "欢迎使用本 Bot！以下是您可以使用的命令：\n\n"
-        "/start - 启动 Bot\n"
+        "命令列表：\n\n"
+        "/start - 启动机器人\n"
         "/help - 查看帮助信息\n"
         "/add_api <名称> <API_URL> - 绑定一个 API\n"
         "/remove_api <名称> - 删除已绑定的 API\n"
         "/call_api <名称> - 调用已绑定的 API\n"
-        "/block_api <API名称> - 屏蔾某个 API（仅群组有效）\n"
-        "/unblock_api <API名称> - 解除对某个 API 的屏蔾（仅群组有效）\n"
+        "/list_apis - 查看已绑定的 API 列表\n"
     )
     await update.message.reply_text(help_text)
 
@@ -51,14 +67,30 @@ async def add_api(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text("用法: /add_api <名称> <API_URL>")
         return
     name, api_url = args[0], args[1]
-    user_id = str(update.effective_user.id)
-    
-    # 保存 API 绑定（在内存中）
-    if user_id not in user_apis:
-        user_apis[user_id] = {}
-    
-    user_apis[user_id][name] = api_url
-    await update.message.reply_text(f"API {name} 已绑定！")
+    chat_type = update.effective_chat.type
+    chat_id = str(update.effective_chat.id)
+
+    if chat_type == Chat.PRIVATE:
+        if chat_id not in api_store["users"]:
+            api_store["users"][chat_id] = {}
+        api_store["users"][chat_id][name] = api_url
+        await update.message.reply_text(f"已为您绑定 API：{name}")
+    elif chat_type in [Chat.GROUP, Chat.SUPERGROUP]:
+        if not await check_admin(update, context):
+            await update.message.reply_text("只有管理员可以管理群组 API。")
+            return
+        if chat_id not in api_store["groups"]:
+            api_store["groups"][chat_id] = {}
+        api_store["groups"][chat_id][name] = api_url
+        await update.message.reply_text(f"已为本群组绑定 API：{name}")
+    elif chat_type == Chat.CHANNEL:
+        if not await check_admin(update, context):
+            await update.message.reply_text("只有频道管理员可以管理 API。")
+            return
+        if chat_id not in api_store["channels"]:
+            api_store["channels"][chat_id] = {}
+        api_store["channels"][chat_id][name] = api_url
+        await update.message.reply_text(f"已为本频道绑定 API：{name}")
 
 async def remove_api(update: Update, context: CallbackContext) -> None:
     args = context.args
@@ -66,14 +98,33 @@ async def remove_api(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text("用法: /remove_api <名称>")
         return
     name = args[0]
-    user_id = str(update.effective_user.id)
+    chat_type = update.effective_chat.type
+    chat_id = str(update.effective_chat.id)
 
-    # 移除 API 绑定（在内存中）
-    if user_id in user_apis and name in user_apis[user_id]:
-        del user_apis[user_id][name]
-        await update.message.reply_text(f"API {name} 已移除！")
-    else:
-        await update.message.reply_text(f"未找到名为 {name} 的 API！")
+    if chat_type == Chat.PRIVATE:
+        if chat_id in api_store["users"] and name in api_store["users"][chat_id]:
+            del api_store["users"][chat_id][name]
+            await update.message.reply_text(f"已删除 API：{name}")
+        else:
+            await update.message.reply_text(f"未找到名为 {name} 的 API。")
+    elif chat_type in [Chat.GROUP, Chat.SUPERGROUP]:
+        if not await check_admin(update, context):
+            await update.message.reply_text("只有管理员可以管理群组 API。")
+            return
+        if chat_id in api_store["groups"] and name in api_store["groups"][chat_id]:
+            del api_store["groups"][chat_id][name]
+            await update.message.reply_text(f"已删除 API：{name}")
+        else:
+            await update.message.reply_text(f"未找到名为 {name} 的 API。")
+    elif chat_type == Chat.CHANNEL:
+        if not await check_admin(update, context):
+            await update.message.reply_text("只有频道管理员可以管理 API。")
+            return
+        if chat_id in api_store["channels"] and name in api_store["channels"][chat_id]:
+            del api_store["channels"][chat_id][name]
+            await update.message.reply_text(f"已删除 API：{name}")
+        else:
+            await update.message.reply_text(f"未找到名为 {name} 的 API。")
 
 async def call_api(update: Update, context: CallbackContext) -> None:
     args = context.args
@@ -81,105 +132,81 @@ async def call_api(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text("用法: /call_api <名称>")
         return
     name = args[0]
-    user_id = str(update.effective_user.id)
+    chat_type = update.effective_chat.type
+    chat_id = str(update.effective_chat.id)
 
-    # 获取 API URL（从内存中）
-    if user_id not in user_apis or name not in user_apis[user_id]:
-        await update.message.reply_text(f"未找到名为 {name} 的 API！")
-        return
-    
-    api_url = user_apis[user_id][name]
-    response = requests.get(api_url)
-    
-    if response.status_code == 200:
-        try:
-            content_type = response.headers.get('Content-Type', '').lower()
-
-            if 'json' in content_type:
-                # 如果是 JSON 格式
-                data = response.json()
-                formatted_json = json.dumps(data, indent=2)  # 格式化 JSON
-                await update.message.reply_text(f"API 返回的 JSON 数据：\n{formatted_json}")
-            
-            elif 'text' in content_type:
-                # 如果是纯文本格式
-                text_data = response.text
-                await update.message.reply_text(f"API 返回的文本数据：\n{text_data}")
-            
-            elif 'xml' in content_type:
-                # 如果是 XML 格式（假设需要解析 XML）
-                from lxml import etree
-                tree = etree.fromstring(response.content)
-                xml_data = etree.tostring(tree, pretty_print=True).decode("utf-8")
-                await update.message.reply_text(f"API 返回的 XML 数据：\n{xml_data}")
-
-            elif 'image' in content_type:
-                # 如果是图片
-                image = Image.open(BytesIO(response.content))
-                bio = BytesIO()
-                bio.name = f"{name}.png"
-                image.save(bio, 'PNG')
-                bio.seek(0)
-                await context.bot.send_photo(chat_id=update.effective_user.id, photo=bio, caption=f"API {name} 返回的图片")
-            
-            elif 'video' in content_type:
-                # 如果是视频
-                bio = BytesIO(response.content)
-                bio.name = f"{name}.mp4"
-                await context.bot.send_video(chat_id=update.effective_user.id, video=bio, caption=f"API {name} 返回的视频")
-            
-            elif 'audio' in content_type:
-                # 如果是音频
-                bio = BytesIO(response.content)
-                bio.name = f"{name}.mp3"
-                await context.bot.send_audio(chat_id=update.effective_user.id, audio=bio, caption=f"API {name} 返回的音频")
-            
-            elif 'application' in content_type or 'octet-stream' in content_type:
-                # 如果是文件（例如 PDF 或其他二进制数据）
-                bio = BytesIO(response.content)
-                bio.name = f"{name}_file"
-                await context.bot.send_document(chat_id=update.effective_user.id, document=bio, caption=f"API {name} 返回的文件")
-            
-            else:
-                await update.message.reply_text(f"未知的内容类型: {content_type}")
-
-        except Exception as e:
-            await update.message.reply_text(f"API 数据处理失败: {str(e)}")
+    if chat_type == Chat.PRIVATE:
+        api_data = api_store["users"].get(chat_id, {})
+    elif chat_type in [Chat.GROUP, Chat.SUPERGROUP]:
+        api_data = api_store["groups"].get(chat_id, {})
+    elif chat_type == Chat.CHANNEL:
+        api_data = api_store["channels"].get(chat_id, {})
     else:
-        await update.message.reply_text(f"API 调用失败，状态码: {response.status_code}")
+        api_data = {}
 
-# FastAPI 设置 webhook
+    if name not in api_data:
+        await update.message.reply_text(f"未找到名为 {name} 的 API。")
+        return
+
+    api_url = api_data[name]
+    try:
+        response = requests.get(api_url)
+        response.raise_for_status()
+        await update.message.reply_text(f"API {name} 返回：\n{response.text}")
+    except Exception as e:
+        await update.message.reply_text(f"API 调用失败：{str(e)}")
+
+async def list_apis(update: Update, context: CallbackContext) -> None:
+    chat_type = update.effective_chat.type
+    chat_id = str(update.effective_chat.id)
+
+    if chat_type == Chat.PRIVATE:
+        apis = api_store["users"].get(chat_id, {})
+    elif chat_type in [Chat.GROUP, Chat.SUPERGROUP]:
+        apis = api_store["groups"].get(chat_id, {})
+    elif chat_type == Chat.CHANNEL:
+        apis = api_store["channels"].get(chat_id, {})
+    else:
+        apis = {}
+
+    if not apis:
+        await update.message.reply_text("当前没有绑定的 API。")
+    else:
+        api_list = "\n".join([f"- {name}: {url}" for name, url in apis.items()])
+        await update.message.reply_text(f"已绑定的 API：\n{api_list}")
+
+async def check_admin(update: Update, context: CallbackContext) -> bool:
+    """检查是否为管理员"""
+    user = update.effective_user
+    chat = update.effective_chat
+    member = await context.bot.get_chat_member(chat.id, user.id)
+    return member.status in ["administrator", "creator"]
+
+# FastAPI 设置
 app = FastAPI()
 
-# 处理根路径请求
 @app.get("/")
 async def root():
     return {"message": "Welcome to the bot webhook server!"}
 
-# 处理 HEAD 请求，避免 405 错误
-@app.head("/")
-async def head():
-    return {"message": "HEAD request received"}
-
-# 设置 webhook 处理逻辑
 @app.post("/webhook")
 async def webhook(request: Request):
-    # 获取请求的 JSON 数据
-    payload = await request.json()
-    
-    # 使用 Application 类处理更新
-    update = Update.de_json(payload, application.bot)
-    
-    # 使用 Application 处理更新
-    await application.process_update(update)
-    
+    try:
+        payload = await request.json()
+        update = Update.de_json(payload, application.bot)
+        await application.process_update(update)
+    except Exception as e:
+        logger.error(f"Webhook 错误: {str(e)}")
     return {"status": "ok"}
 
-# 启动 FastAPI 和 Telegram Bot
+# 注册命令处理器
+application.add_handler(CommandHandler("start", start))
+application.add_handler(CommandHandler("help", help))
+application.add_handler(CommandHandler("add_api", add_api))
+application.add_handler(CommandHandler("remove_api", remove_api))
+application.add_handler(CommandHandler("call_api", call_api))
+application.add_handler(CommandHandler("list_apis", list_apis))
+
 if __name__ == "__main__":
-    # 设置 Webhook URL
-    webhook_url = os.getenv('WEBHOOK_URL', 'https://your-app-name.onrender.com/webhook')  # 获取部署后的 URL
-    asyncio.run(application.bot.set_webhook(url=webhook_url))  # 设置 Webhook
-    
-    # 启动 Uvicorn 服务器
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv('PORT', 8000)))  # 使用 Render 提供的端口
+    asyncio.run(application.bot.set_webhook(url=webhook_url))
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv('PORT', 8000)))

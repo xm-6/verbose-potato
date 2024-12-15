@@ -1,7 +1,7 @@
 requests
 pillow
 lxml
-python-telegram-bot
+python-telegram-bot>=20.0
 fastapi
 uvicorn
 
