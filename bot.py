@@ -20,10 +20,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # 检查用户是否注册了 API
     if user.id not in user_data or not user_data[user.id]['apis']:
-        await update.message.reply_text("你还没有设置 API，请发送 /addapi <你的API链接> 来添加。")
+        await update.message.reply_text(
+            "你好！欢迎使用本机器人！\n\n"
+            "你还没有设置任何 API。请使用以下命令：\n"
+            "/addapi <API链接> - 添加一个 API\n"
+            "/removeapi <编号> - 删除指定 API\n"
+            "/listapi - 查看所有已添加的 API\n"
+            "/help - 查看帮助信息"
+        )
         return
 
-    # 示例接收内容并以富文本形式展示
+    # 显示已添加的 API
     content = "以下是你已添加的 API 列表：\n"
     for idx, api in enumerate(user_data[user.id]['apis'], start=1):
         content += f"{idx}. {api}\n"
@@ -31,7 +38,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     formatted_content = (
         f"<b>你好，{full_name}！</b>\n\n"
         f"<i>你的 API 列表：</i>\n"
-        f"{content}"
+        f"{content}\n"
+        "你可以使用以下命令：\n"
+        "/addapi <API链接> - 添加一个 API\n"
+        "/removeapi <编号> - 删除指定 API\n"
+        "/listapi - 查看所有已添加的 API\n"
+        "/help - 查看帮助信息"
     )
     await update.message.reply_text(formatted_content, parse_mode=ParseMode.HTML)
 
@@ -70,24 +82,29 @@ async def remove_api(update: Update, context: ContextTypes.DEFAULT_TYPE):
     removed_api = user_data[user.id]['apis'].pop(api_index)
     await update.message.reply_text(f"成功删除 API：{removed_api}")
 
-# 群组或频道发送消息的函数
-async def send_to_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat
-    chat_type = chat.type
-
-    if chat_type in ["group", "supergroup", "channel"]:
-        await update.message.reply_text(f"你好，这是一个 {chat_type}，标题为：{chat.title}。")
-
-# 用户更新信息的功能
-async def update_user_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# 处理 /listapi 命令
+async def list_api(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
 
-    if user.id in user_data:
-        user_data[user.id]['username'] = user.username
-        user_data[user.id]['full_name'] = f"{user.first_name} {user.last_name}".strip()
-        await update.message.reply_text("用户信息已更新。")
-    else:
-        await update.message.reply_text("你还没有设置 API，请发送 /addapi <你的API链接> 来添加。")
+    if user.id not in user_data or not user_data[user.id]['apis']:
+        await update.message.reply_text("你还没有添加任何 API。")
+        return
+
+    content = "以下是你已添加的 API 列表：\n"
+    for idx, api in enumerate(user_data[user.id]['apis'], start=1):
+        content += f"{idx}. {api}\n"
+
+    await update.message.reply_text(content)
+
+# 处理 /help 命令
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "欢迎使用本机器人！以下是可用命令：\n"
+        "/addapi <API链接> - 添加一个 API\n"
+        "/removeapi <编号> - 删除指定 API\n"
+        "/listapi - 查看所有已添加的 API\n"
+        "/help - 查看帮助信息"
+    )
 
 # ----------------- 创建 Web 服务器以监听端口 -----------------
 
@@ -114,9 +131,9 @@ async def main():
     # 注册命令处理器和消息处理器
     application.add_handler(CommandHandler("addapi", add_api))
     application.add_handler(CommandHandler("removeapi", remove_api))
-    application.add_handler(CommandHandler("updateinfo", update_user_info))
+    application.add_handler(CommandHandler("listapi", list_api))
+    application.add_handler(CommandHandler("help", help_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    application.add_handler(MessageHandler(filters.CHAT, send_to_group))
 
     # 启动 Web 服务和 Telegram Bot
     await asyncio.gather(
@@ -124,16 +141,14 @@ async def main():
         application.initialize()  # 初始化 Telegram Application
     )
 
-    # 独立启动 run_polling（非阻塞）
-    await application.start()
-    await application.updater.start_polling()
-
-    # 等待终止信号
-    try:
-        await asyncio.Future()  # 保持程序运行
-    finally:
-        await application.updater.stop()
-        await application.stop()
+    # 独立启动 Webhook（Render 平台推荐）
+    webhook_url = os.getenv("WEBHOOK_URL")
+    await application.run_webhook(
+        listen="0.0.0.0",
+        port=int(os.getenv("PORT", 8443)),
+        url_path="",
+        webhook_url=webhook_url
+    )
 
 # ----------------- 显式管理事件循环 -----------------
 
