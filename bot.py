@@ -9,38 +9,36 @@ from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-# 设置日志级别和格式
+# 日志设置
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# 从环境变量读取配置
+# 从环境变量读取必要配置
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
-PORT = int(os.getenv("PORT", 8443))  # Render 会通过环境变量提供端口
+PORT = int(os.getenv("PORT", 8443))
 
 if not TELEGRAM_TOKEN:
     raise ValueError("TELEGRAM_TOKEN 环境变量未设置")
 if not WEBHOOK_URL:
     raise ValueError("WEBHOOK_URL 环境变量未设置")
 
-# 用户数据存储（内存），结构：{chat_id: {"apis": [{"url": str, "last_seen": str}, ...]}}
+# 内存数据存储结构
 user_data = {}
 user_data_lock = asyncio.Lock()
 
 # 定时任务调度器
 scheduler = AsyncIOScheduler()
 
-# ----------------- 命令处理器 -----------------
+# 命令处理函数
 async def start_command(update: Update, context):
-    """处理 /start 命令"""
     logger.info(f"用户 {update.effective_chat.id} 使用了 /start")
     await update.message.reply_text("欢迎使用 Telegram Bot！\n发送 /help 查看可用命令。")
 
 async def help_command(update: Update, context):
-    """处理 /help 命令"""
     logger.info(f"用户 {update.effective_chat.id} 使用了 /help")
     await update.message.reply_text(
         "可用命令：\n"
@@ -53,7 +51,6 @@ async def help_command(update: Update, context):
     )
 
 async def add_api(update: Update, context):
-    """添加用户的 API"""
     chat_id = update.effective_chat.id
     logger.info(f"用户 {chat_id} 使用了 /addapi 命令")
 
@@ -67,7 +64,6 @@ async def add_api(update: Update, context):
     await update.message.reply_text(f"成功添加 API：{api_link}")
 
 async def list_api(update: Update, context):
-    """列出用户的所有 API"""
     chat_id = update.effective_chat.id
     logger.info(f"用户 {chat_id} 使用了 /listapi 命令")
 
@@ -83,7 +79,6 @@ async def list_api(update: Update, context):
         await update.message.reply_text(reply_text)
 
 async def remove_api(update: Update, context):
-    """删除用户的 API"""
     chat_id = update.effective_chat.id
     logger.info(f"用户 {chat_id} 使用了 /removeapi 命令")
 
@@ -94,16 +89,14 @@ async def remove_api(update: Update, context):
     api_index = int(context.args[0]) - 1
     async with user_data_lock:
         apis = user_data.get(chat_id, {}).get("apis", [])
-
         if 0 <= api_index < len(apis):
             removed = apis.pop(api_index)
             await update.message.reply_text(f"成功删除 API：{html.escape(removed['url'])}")
         else:
             await update.message.reply_text("无效的编号。")
 
-# ----------------- 定时任务 -----------------
+# 定时任务：轮询 API
 async def poll_apis(application):
-    """轮询用户的 API，并推送新消息"""
     logger.info("开始轮询 API")
     async with aiohttp.ClientSession() as session:
         async with user_data_lock:
@@ -124,21 +117,18 @@ async def poll_apis(application):
                         logger.error(f"轮询 API 出错：{api['url']}，错误：{e}")
 
 def format_message(data):
-    """格式化消息，支持富文本"""
     title = html.escape(data.get("title", "无标题"))
     content = html.escape(data.get("content", "无内容"))
     return f"<b>{title}</b>\n{content}"
 
 async def send_message(application, chat_id, message):
-    """发送消息到用户或群组"""
     try:
         await application.bot.send_message(chat_id=chat_id, text=message, parse_mode=ParseMode.HTML)
     except Exception as e:
         logger.error(f"发送消息失败给 {chat_id}，错误：{e}")
 
-# ----------------- Webhook 路由 -----------------
+# Webhook 路由处理函数
 async def handle_webhook(request):
-    """处理 Telegram Webhook 请求"""
     if request.method == 'GET':
         return web.Response(text="Webhook is active!")
 
@@ -155,7 +145,7 @@ async def handle_webhook(request):
 
     return web.Response(status=405, text="Method Not Allowed")
 
-# ----------------- 主程序 -----------------
+# 主程序
 async def main():
     application = Application.builder().token(TELEGRAM_TOKEN).build()
 
@@ -166,17 +156,21 @@ async def main():
     application.add_handler(CommandHandler("listapi", list_api))
     application.add_handler(CommandHandler("removeapi", remove_api))
 
-    # 删除旧 webhook 并设置新 webhook
+    # 设置 Webhook
     await application.bot.delete_webhook()
     await application.bot.set_webhook(WEBHOOK_URL)
-    logger.info("Webhook 已设置")
+    logger.info(f"Webhook 已设置为：{WEBHOOK_URL}")
 
-    # 启动定时任务：每 10 秒轮询一次用户的 API
+    # 初始化和启动应用程序，使其可处理更新
+    await application.initialize()
+    await application.start()
+
+    # 启动定时任务
     scheduler.add_job(poll_apis, "interval", seconds=10, args=[application])
     scheduler.start()
     logger.info("定时任务调度器已启动")
 
-    # 设置 Webhook 路由
+    # 设置 aiohttp 应用
     app = web.Application()
     app.router.add_post("/webhook", handle_webhook)
     app['application'] = application
