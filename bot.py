@@ -151,6 +151,10 @@ async def call_api(update: Update, context: CallbackContext) -> None:
 # FastAPI 设置 webhook
 app = FastAPI()
 
+@app.get("/")
+async def root():
+    return {"message": "Welcome to the bot webhook server!"}
+
 @app.post("/webhook")
 async def webhook(request: Request):
     payload = await request.json()
@@ -161,7 +165,7 @@ async def webhook(request: Request):
 # 启动 FastAPI 和 Telegram Bot
 if __name__ == "__main__":
     # 设置 Webhook URL
-    webhook_url = os.getenv('WEBHOOK_URL', 'https://your-app.onrender.com/webhook')  # 获取部署后的 URL
+    webhook_url = os.getenv('WEBHOOK_URL', 'https://your-app-name.onrender.com/webhook')  # 获取部署后的 URL
     asyncio.run(bot.set_webhook(url=webhook_url))
     
     # 启动 Uvicorn 服务器
