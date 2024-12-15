@@ -2,7 +2,7 @@ import os
 import asyncio
 import requests
 from aiohttp import web
-from telegram import Update
+from telegram import Update, Chat
 from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -12,7 +12,7 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 PORT = int(os.getenv("PORT", 8443))  # Render 动态分配端口
 
-# 用户数据存储
+# 用户数据存储：支持群组和私聊
 user_data = {}  # {user_id: {"apis": [{"url": "API链接", "last_seen": "上次获取的最新数据ID/时间"}]}}
 
 # 定时任务调度器
@@ -22,23 +22,37 @@ scheduler = AsyncIOScheduler()
 
 async def start_command(update: Update, context):
     """处理 /start 命令"""
-    await update.message.reply_text("欢迎使用 Telegram Bot！")
+    await update.message.reply_text("欢迎使用 Telegram Bot！\n发送 /help 查看可用命令。")
+
+async def help_command(update: Update, context):
+    """处理 /help 命令"""
+    await update.message.reply_text(
+        "可用命令：\n"
+        "/start - 启动机器人\n"
+        "/help - 获取帮助\n"
+        "/addapi <API链接> - 添加一个 API\n"
+        "/listapi - 查看所有已添加的 API\n"
+        "/removeapi <编号> - 删除指定 API\n"
+        "机器人会自动监控 API，并推送最新消息！"
+    )
 
 async def add_api(update: Update, context):
     """添加用户的 API"""
+    chat = update.effective_chat
     user = update.effective_user
+
     if len(context.args) != 1:
         await update.message.reply_text("请使用正确的格式：/addapi <API链接>")
         return
 
     api_link = context.args[0]
-    user_data.setdefault(user.id, {"apis": []})["apis"].append({"url": api_link, "last_seen": None})
+    user_data.setdefault(chat.id, {"apis": []})["apis"].append({"url": api_link, "last_seen": None})
     await update.message.reply_text(f"成功添加 API：{api_link}")
 
 async def list_api(update: Update, context):
     """列出用户的所有 API"""
-    user = update.effective_user
-    apis = user_data.get(user.id, {}).get("apis", [])
+    chat = update.effective_chat
+    apis = user_data.get(chat.id, {}).get("apis", [])
 
     if not apis:
         await update.message.reply_text("你还没有添加任何 API。")
@@ -50,13 +64,13 @@ async def list_api(update: Update, context):
 
 async def remove_api(update: Update, context):
     """删除用户的 API"""
-    user = update.effective_user
+    chat = update.effective_chat
     if len(context.args) != 1 or not context.args[0].isdigit():
         await update.message.reply_text("请使用正确的格式：/removeapi <编号>")
         return
 
     api_index = int(context.args[0]) - 1
-    apis = user_data.get(user.id, {}).get("apis", [])
+    apis = user_data.get(chat.id, {}).get("apis", [])
 
     if 0 <= api_index < len(apis):
         removed = apis.pop(api_index)
@@ -68,7 +82,7 @@ async def remove_api(update: Update, context):
 
 async def poll_apis():
     """轮询用户的 API，并推送新消息"""
-    for user_id, data in user_data.items():
+    for chat_id, data in user_data.items():
         apis = data.get("apis", [])
         for api in apis:
             try:
@@ -78,7 +92,7 @@ async def poll_apis():
                     if "id" in new_data and api["last_seen"] != new_data["id"]:
                         api["last_seen"] = new_data["id"]
                         message = format_message(new_data)
-                        await send_message(user_id, message)
+                        await send_message(chat_id, message)
                 else:
                     print(f"API 请求失败：{api['url']}，状态码：{response.status_code}")
             except Exception as e:
@@ -90,10 +104,10 @@ def format_message(data):
     content = data.get("content", "无内容")
     return f"<b>{title}</b>\n{content}"
 
-async def send_message(user_id, message):
-    """发送消息给用户"""
+async def send_message(chat_id, message):
+    """发送消息到用户或群组"""
     bot = bot_context.bot
-    await bot.send_message(chat_id=user_id, text=message, parse_mode=ParseMode.HTML)
+    await bot.send_message(chat_id=chat_id, text=message, parse_mode=ParseMode.HTML)
 
 # ----------------- Webhook 路由 -----------------
 
@@ -115,6 +129,7 @@ async def main():
     bot_context = Application.builder().token(TELEGRAM_TOKEN).build()
 
     bot_context.add_handler(CommandHandler("start", start_command))
+    bot_context.add_handler(CommandHandler("help", help_command))
     bot_context.add_handler(CommandHandler("addapi", add_api))
     bot_context.add_handler(CommandHandler("listapi", list_api))
     bot_context.add_handler(CommandHandler("removeapi", remove_api))
