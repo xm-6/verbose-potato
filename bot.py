@@ -132,8 +132,17 @@ async def main():
             webhook_url=WEBHOOK_URL,
         )
 
+    # 停止健康检查服务
+    await runner.cleanup()
+
 if __name__ == "__main__":
+    # 检查事件循环状态并运行主程序
     try:
-        asyncio.run(main())
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            print("事件循环已在运行，直接使用当前循环...")
+            loop.create_task(main())
+        else:
+            asyncio.run(main())
     except Exception as e:
         print(f"程序启动失败: {e}")
