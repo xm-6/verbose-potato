@@ -135,32 +135,36 @@ async def main():
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    # 启动 Web 服务和 Telegram Bot
-    await asyncio.gather(
-        start_web_server(),  # 启动 Web 服务监听端口
-        application.initialize()  # 初始化 Telegram Application
-    )
-
-    # 独立启动 Webhook（Render 平台推荐）
+    # 获取 Webhook 的 URL
     webhook_url = os.getenv("WEBHOOK_URL")
-    await application.run_webhook(
-        listen="0.0.0.0",
-        port=int(os.getenv("PORT", 8443)),
-        url_path="",
-        webhook_url=webhook_url
-    )
+
+    try:
+        # 启动 Webhook（Render 平台推荐）
+        await application.run_webhook(
+            listen="0.0.0.0",
+            port=int(os.getenv("PORT", 8443)),
+            url_path="",
+            webhook_url=webhook_url
+        )
+    except RuntimeError as e:
+        if "already running" in str(e):
+            print("事件循环已在运行，跳过重复启动。")
+        else:
+            raise
 
 # ----------------- 显式管理事件循环 -----------------
 
 if __name__ == "__main__":
     try:
-        # 设置事件循环，兼容 Render 环境
+        # 创建并设置新的事件循环（Render 平台兼容）
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
+
+        # 运行主程序
         loop.run_until_complete(main())
     except RuntimeError as e:
         if "already running" in str(e):
-            print("事件循环已在运行，跳过重复启动。")
+            print("检测到事件循环冲突，服务可能已启动。")
         else:
             raise
     except Exception as e:
