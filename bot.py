@@ -113,11 +113,12 @@ async def handle_webhook(request):
     """处理 Telegram Webhook 请求"""
     try:
         data = await request.json()  # 获取 Telegram POST 请求的数据
-        update = Update.de_json(data, bot_context.bot)
+        print(f"收到的 Webhook 数据：{data}")  # 调试日志
+        update = Update.de_json(data, bot_context.bot)  # 转换为 Telegram 更新对象
         await bot_context.process_update(update)  # 处理更新
         return web.Response(text="OK")
     except Exception as e:
-        print(f"处理 Webhook 请求时出错: {e}")
+        print(f"Webhook 处理失败：{e}")  # 错误日志
         return web.Response(text="Error", status=500)
 
 # ----------------- 主程序 -----------------
