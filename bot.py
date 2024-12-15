@@ -112,13 +112,6 @@ async def main():
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    # 启动 Webhook
-    await application.run_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        webhook_url=WEBHOOK_URL,
-    )
-
     # 健康检查服务
     app = web.Application()
     app.router.add_get("/", health_check)
@@ -127,19 +120,17 @@ async def main():
     site = web.TCPSite(runner, "0.0.0.0", PORT)
     await site.start()
 
+    # 启动 Webhook
+    async with application:
+        await application.run_webhook(
+            listen="0.0.0.0",
+            port=PORT,
+            webhook_url=WEBHOOK_URL,
+        )
+
+# 程序入口
 if __name__ == "__main__":
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            print("事件循环已在运行，直接使用当前循环...")
-            loop.run_until_complete(main())
-        else:
-            print("创建新的事件循环...")
-            loop.run_until_complete(main())
-    except RuntimeError:
-        print("没有事件循环，创建新的事件循环...")
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(main())
+        asyncio.run(main())
     except Exception as e:
         print(f"程序启动失败: {e}")
