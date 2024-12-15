@@ -159,16 +159,20 @@ async def webhook(request: Request):
 def run():
     uvicorn.run(app, host="0.0.0.0", port=8000)
 
+async def set_webhook():
+    bot = Bot(token=token)
+    await bot.set_webhook(url=webhook_url)  # 确保调用异步的 set_webhook 方法
+
 if __name__ == "__main__":
     # 启动 FastAPI 线程
     thread = Thread(target=run)
     thread.start()
 
     # 设置 Webhook URL
-    bot = Bot(token=token)
-    await bot.set_webhook(url=webhook_url)  # 确保调用异步的 set_webhook 方法
+    import asyncio
+    asyncio.run(set_webhook())  # 使用 asyncio.run 来运行 set_webhook
 
-    # 不使用轮询，只使用 Webhook
+    # 启动 Telegram Bot 处理命令
     app = ApplicationBuilder().token(token).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help))  # 添加 help 命令
