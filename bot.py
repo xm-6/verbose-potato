@@ -26,14 +26,26 @@ if not TELEGRAM_TOKEN:
 if not WEBHOOK_URL:
     raise ValueError("WEBHOOK_URL 环境变量未设置")
 
-# 内存数据存储结构
+# 用户数据存储结构：
+# user_data = {
+#   chat_id: {
+#       "apis": [
+#           {
+#               "url": "http://example.com/api",
+#               "last_seen": "上一次处理过的id",
+#           },
+#           ...
+#       ]
+#   },
+#   ...
+# }
 user_data = {}
 user_data_lock = asyncio.Lock()
 
 # 定时任务调度器
 scheduler = AsyncIOScheduler()
 
-# 命令处理函数
+# ----------------- 命令处理器 -----------------
 async def start_command(update: Update, context):
     logger.info(f"用户 {update.effective_chat.id} 使用了 /start")
     await update.message.reply_text("欢迎使用 Telegram Bot！\n发送 /help 查看可用命令。")
@@ -47,7 +59,7 @@ async def help_command(update: Update, context):
         "/addapi <API链接> - 添加一个 API\n"
         "/listapi - 查看所有已添加的 API\n"
         "/removeapi <编号> - 删除指定 API\n"
-        "机器人会自动监控 API，并推送最新消息！"
+        "机器人会自动监控你添加的 API，并在有新内容时推送给你！"
     )
 
 async def add_api(update: Update, context):
@@ -95,7 +107,7 @@ async def remove_api(update: Update, context):
         else:
             await update.message.reply_text("无效的编号。")
 
-# 定时任务：轮询 API
+# ----------------- 定时任务 -----------------
 async def poll_apis(application):
     logger.info("开始轮询 API")
     async with aiohttp.ClientSession() as session:
@@ -107,7 +119,8 @@ async def poll_apis(application):
                         async with session.get(api["url"]) as response:
                             if response.status == 200:
                                 new_data = await response.json()
-                                if "id" in new_data and api["last_seen"] != new_data["id"]:
+                                # 判断逻辑：如果有 id 且与 last_seen 不同，则视为更新
+                                if "id" in new_data and api.get("last_seen") != new_data["id"]:
                                     api["last_seen"] = new_data["id"]
                                     message = format_message(new_data)
                                     await send_message(application, chat_id, message)
@@ -117,6 +130,8 @@ async def poll_apis(application):
                         logger.error(f"轮询 API 出错：{api['url']}，错误：{e}")
 
 def format_message(data):
+    # 根据你的 API 数据结构修改此函数
+    # 假设你的 API 返回 {"id": ..., "title": ..., "content": ...}
     title = html.escape(data.get("title", "无标题"))
     content = html.escape(data.get("content", "无内容"))
     return f"<b>{title}</b>\n{content}"
@@ -127,10 +142,10 @@ async def send_message(application, chat_id, message):
     except Exception as e:
         logger.error(f"发送消息失败给 {chat_id}，错误：{e}")
 
-# Webhook 路由处理函数
+# ----------------- Webhook 路由处理函数 -----------------
 async def handle_webhook(request):
     if request.method == 'GET':
-        # 用于手动访问检查
+        # 用于手动访问检查，GET /webhook 返回此提示
         return web.Response(text="Webhook is active!")
     elif request.method == 'POST':
         try:
@@ -145,7 +160,7 @@ async def handle_webhook(request):
     else:
         return web.Response(status=405, text="Method Not Allowed")
 
-# 主程序
+# ----------------- 主程序 -----------------
 async def main():
     application = Application.builder().token(TELEGRAM_TOKEN).build()
 
@@ -170,9 +185,8 @@ async def main():
     scheduler.start()
     logger.info("定时任务调度器已启动")
 
-    # 设置 aiohttp 应用
+    # 设置 aiohttp 应用路由
     app = web.Application()
-    # 同时支持 GET 和 POST
     app.router.add_get("/webhook", handle_webhook)
     app.router.add_post("/webhook", handle_webhook)
     app['application'] = application
