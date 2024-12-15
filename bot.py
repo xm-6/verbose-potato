@@ -4,37 +4,35 @@ import html
 import logging
 import aiohttp
 from aiohttp import web
-from telegram import Update
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-# 日志设置
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# 从环境变量读取必要配置
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 PORT = int(os.getenv("PORT", 8443))
 
 if not TELEGRAM_TOKEN:
-    raise ValueError("TELEGRAM_TOKEN 环境变量未设置")
+    raise ValueError("TELEGRAM_TOKEN 未设置")
 if not WEBHOOK_URL:
-    raise ValueError("WEBHOOK_URL 环境变量未设置")
+    raise ValueError("WEBHOOK_URL 未设置")
 
-# 用户数据存储结构：
+# 用户数据存储：
 # user_data = {
 #   chat_id: {
 #       "apis": [
 #           {
 #               "url": "http://example.com/api",
-#               "last_seen": "上一次处理过的id",
+#               "last_id": None
+#               # 根据需求可存更多字段
 #           },
-#           ...
 #       ]
 #   },
 #   ...
@@ -42,125 +40,175 @@ if not WEBHOOK_URL:
 user_data = {}
 user_data_lock = asyncio.Lock()
 
-# 定时任务调度器
 scheduler = AsyncIOScheduler()
 
-# ----------------- 命令处理器 -----------------
+# ============ 命令处理器 ============
+
 async def start_command(update: Update, context):
-    logger.info(f"用户 {update.effective_chat.id} 使用了 /start")
-    await update.message.reply_text("欢迎使用 Telegram Bot！\n发送 /help 查看可用命令。")
+    await update.message.reply_text("机器人已启动！使用 /help 查看帮助。")
 
 async def help_command(update: Update, context):
-    logger.info(f"用户 {update.effective_chat.id} 使用了 /help")
     await update.message.reply_text(
-        "可用命令：\n"
-        "/start - 启动机器人\n"
-        "/help - 获取帮助\n"
-        "/addapi <API链接> - 添加一个 API\n"
-        "/listapi - 查看所有已添加的 API\n"
-        "/removeapi <编号> - 删除指定 API\n"
-        "机器人会自动监控你添加的 API，并在有新内容时推送给你！"
+        "/start - 启动\n"
+        "/help - 帮助信息\n"
+        "/addapi <API链接> - 添加 API\n"
+        "/listapi - 列出已添加的 API\n"
+        "/removeapi <编号> - 删除指定 API\n\n"
+        "机器人会：\n"
+        "1. 定期轮询你的 API（可设为1小时）以检测更新\n"
+        "2. 可通过 /api_update 路由接收API主动推送更新（需API支持）\n"
+        "一旦检测到新内容（ID或其他字段变化）就会通知你。\n"
+        "支持HTML、Markdown富文本格式、发送图片、按钮等高级功能。"
     )
 
 async def add_api(update: Update, context):
     chat_id = update.effective_chat.id
-    logger.info(f"用户 {chat_id} 使用了 /addapi 命令")
-
     if len(context.args) != 1:
-        await update.message.reply_text("请使用正确的格式：/addapi <API链接>")
+        await update.message.reply_text("格式：/addapi <API链接>")
         return
-
     api_link = context.args[0]
     async with user_data_lock:
-        user_data.setdefault(chat_id, {"apis": []})["apis"].append({"url": api_link, "last_seen": None})
-    await update.message.reply_text(f"成功添加 API：{api_link}")
+        user_data.setdefault(chat_id, {"apis": []})["apis"].append({"url": api_link, "last_id": None})
+    await update.message.reply_text(f"已添加 API：{api_link}")
 
 async def list_api(update: Update, context):
     chat_id = update.effective_chat.id
-    logger.info(f"用户 {chat_id} 使用了 /listapi 命令")
-
     async with user_data_lock:
         apis = user_data.get(chat_id, {}).get("apis", [])
-
     if not apis:
-        await update.message.reply_text("你还没有添加任何 API。")
+        await update.message.reply_text("你还没有添加任何API。")
     else:
-        reply_text = "你已添加的 API 列表：\n" + "\n".join(
-            f"{idx + 1}. {html.escape(api['url'])}" for idx, api in enumerate(apis)
-        )
-        await update.message.reply_text(reply_text)
+        lines = [f"{i+1}. {api['url']}" for i, api in enumerate(apis)]
+        await update.message.reply_text("已添加的API列表：\n" + "\n".join(lines))
 
 async def remove_api(update: Update, context):
     chat_id = update.effective_chat.id
-    logger.info(f"用户 {chat_id} 使用了 /removeapi 命令")
-
     if len(context.args) != 1 or not context.args[0].isdigit():
-        await update.message.reply_text("请使用正确的格式：/removeapi <编号>")
+        await update.message.reply_text("格式：/removeapi <编号>")
         return
-
-    api_index = int(context.args[0]) - 1
+    idx = int(context.args[0]) - 1
     async with user_data_lock:
         apis = user_data.get(chat_id, {}).get("apis", [])
-        if 0 <= api_index < len(apis):
-            removed = apis.pop(api_index)
-            await update.message.reply_text(f"成功删除 API：{html.escape(removed['url'])}")
+        if 0 <= idx < len(apis):
+            removed = apis.pop(idx)
+            await update.message.reply_text(f"已删除 API：{removed['url']}")
         else:
-            await update.message.reply_text("无效的编号。")
+            await update.message.reply_text("无效编号。")
 
-# ----------------- 定时任务 -----------------
+# ============ 定时轮询逻辑（备用方案） ============
+# 每隔一段时间检查 API 是否有更新（如 1 小时）
+# 将 seconds=10 改为 seconds=3600 即 1 小时
 async def poll_apis(application):
     logger.info("开始轮询 API")
     async with aiohttp.ClientSession() as session:
         async with user_data_lock:
             for chat_id, data in user_data.items():
-                apis = data.get("apis", [])
-                for api in apis:
-                    try:
-                        async with session.get(api["url"]) as response:
-                            if response.status == 200:
-                                new_data = await response.json()
-                                # 判断逻辑：如果有 id 且与 last_seen 不同，则视为更新
-                                if "id" in new_data and api.get("last_seen") != new_data["id"]:
-                                    api["last_seen"] = new_data["id"]
-                                    message = format_message(new_data)
-                                    await send_message(application, chat_id, message)
-                            else:
-                                logger.error(f"API 请求失败：{api['url']}，状态码：{response.status}")
-                    except Exception as e:
-                        logger.error(f"轮询 API 出错：{api['url']}，错误：{e}")
+                for api in data.get("apis", []):
+                    await check_and_notify(application, chat_id, api, session)
 
-def format_message(data):
-    # 根据你的 API 数据结构修改此函数
-    # 假设你的 API 返回 {"id": ..., "title": ..., "content": ...}
-    title = html.escape(data.get("title", "无标题"))
-    content = html.escape(data.get("content", "无内容"))
-    return f"<b>{title}</b>\n{content}"
-
-async def send_message(application, chat_id, message):
+async def check_and_notify(application, chat_id, api, session):
     try:
-        await application.bot.send_message(chat_id=chat_id, text=message, parse_mode=ParseMode.HTML)
-    except Exception as e:
-        logger.error(f"发送消息失败给 {chat_id}，错误：{e}")
+        async with session.get(api["url"]) as resp:
+            if resp.status == 200:
+                data = await resp.json()
 
-# ----------------- Webhook 路由处理函数 -----------------
+                # 假设 API 返回的JSON如下：
+                # {
+                #   "id": "唯一标识新内容的字段",
+                #   "title": "可选标题",
+                #   "content": "可选内容",
+                #   "image_url": "如有图片则提供链接"
+                # }
+                
+                new_id = data.get("id")
+                old_id = api.get("last_id")
+
+                if new_id is not None and new_id != old_id:
+                    # 更新记录
+                    api["last_id"] = new_id
+                    # 根据数据决定发送什么内容
+                    await send_update_to_user(application, chat_id, data)
+            else:
+                logger.error(f"请求失败：{api['url']} 状态码：{resp.status}")
+    except Exception as e:
+        logger.error(f"轮询出错：{api['url']} 错误：{e}")
+
+# ============ 发送消息的函数 ============
+async def send_update_to_user(application, chat_id, data):
+    # 自定义消息格式与逻辑
+    title = data.get("title", "无标题")
+    content = data.get("content", "无内容")
+    image_url = data.get("image_url")  # 如果有图片字段
+    
+    # 使用HTML格式发送文本
+    message_text = f"<b>{html.escape(title)}</b>\n{html.escape(content)}"
+
+    # 可选：添加 InlineKeyboard 按钮
+    # keyboard = [
+    #     [InlineKeyboardButton("查看详情", url="https://example.com")],
+    #     [InlineKeyboardButton("下一条", callback_data='next')]
+    # ]
+    # reply_markup = InlineKeyboardMarkup(keyboard)
+
+    # 如果有图片，就先发送图片，再发送文字说明
+    if image_url:
+        await application.bot.send_photo(
+            chat_id=chat_id,
+            photo=image_url,
+            caption=message_text,
+            parse_mode=ParseMode.HTML
+            # reply_markup=reply_markup  # 如果需要按钮
+        )
+    else:
+        # 没有图片则直接发送文本消息
+        await application.bot.send_message(
+            chat_id=chat_id,
+            text=message_text,
+            parse_mode=ParseMode.HTML
+            # reply_markup=reply_markup  # 如果需要按钮
+        )
+
+# ============ API 主动推送更新（可选） ============
+# 当API支持更新时主动POST数据到 /api_update
+# 你可在这里根据接收到的数据立刻通知用户，无需等待轮询
+async def handle_api_update(request):
+    if request.method == 'POST':
+        try:
+            data = await request.json()
+            # 此处根据 data 中信息决定要通知哪些用户
+            # 假设所有用户都订阅这个更新，或根据 data 决定特定用户列表
+            # 这里简单示例通知所有用户（实际请根据需要筛选）
+            async with user_data_lock:
+                for chat_id, info in user_data.items():
+                    for api in info.get("apis", []):
+                        # 如有字段data['id']匹配api状态，才发送给该用户
+                        # 简单示例直接发给所有用户
+                        await send_update_to_user(request.app['application'], chat_id, data)
+            return web.Response(text="OK")
+        except Exception as e:
+            logger.error(f"handle_api_update错误：{e}")
+            return web.Response(text=str(e), status=500)
+    else:
+        return web.Response(status=405, text="Method Not Allowed")
+
+# ============ Telegram Webhook 路由 ============
 async def handle_webhook(request):
     if request.method == 'GET':
-        # 用于手动访问检查，GET /webhook 返回此提示
         return web.Response(text="Webhook is active!")
     elif request.method == 'POST':
         try:
             data = await request.json()
-            logger.info(f"收到的 Webhook 数据：{data}")
+            logger.info(f"Webhook数据：{data}")
             update = Update.de_json(data, request.app['application'].bot)
             await request.app['application'].process_update(update)
             return web.Response(text="OK")
         except Exception as e:
-            logger.error(f"Webhook 处理失败：{e}")
-            return web.Response(text=f"Error: {e}", status=500)
+            logger.error(f"Webhook处理失败：{e}")
+            return web.Response(text=str(e), status=500)
     else:
         return web.Response(status=405, text="Method Not Allowed")
 
-# ----------------- 主程序 -----------------
+# ============ 主程序入口 ============
 async def main():
     application = Application.builder().token(TELEGRAM_TOKEN).build()
 
@@ -171,24 +219,26 @@ async def main():
     application.add_handler(CommandHandler("listapi", list_api))
     application.add_handler(CommandHandler("removeapi", remove_api))
 
-    # 删除旧 webhook 并设置新 webhook
+    # 设置Telegram Webhook
     await application.bot.delete_webhook()
     await application.bot.set_webhook(WEBHOOK_URL)
-    logger.info(f"Webhook 已设置为：{WEBHOOK_URL}")
+    logger.info(f"Webhook已设置：{WEBHOOK_URL}")
 
-    # 初始化和启动应用程序，使其可处理更新
     await application.initialize()
     await application.start()
 
-    # 启动定时任务
-    scheduler.add_job(poll_apis, "interval", seconds=10, args=[application])
+    # 启动定时器（间隔可设长，如1小时）
+    scheduler.add_job(poll_apis, "interval", seconds=3600, args=[application])
     scheduler.start()
     logger.info("定时任务调度器已启动")
 
-    # 设置 aiohttp 应用路由
     app = web.Application()
     app.router.add_get("/webhook", handle_webhook)
     app.router.add_post("/webhook", handle_webhook)
+
+    # 可选：API主动更新接口
+    app.router.add_post("/api_update", handle_api_update)
+
     app['application'] = application
 
     runner = web.AppRunner(app)
@@ -200,7 +250,4 @@ async def main():
     await asyncio.Event().wait()
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit):
-        logger.info("服务器已停止")
+    asyncio.run(main())
