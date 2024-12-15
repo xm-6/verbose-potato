@@ -24,7 +24,6 @@ if not webhook_url:
 
 # 存储 API 绑定的字典（内存替代数据库）
 user_apis = {}
-group_settings = {}
 
 # Telegram Bot 逻辑
 async def start(update: Update, context: CallbackContext) -> None:
@@ -92,78 +91,59 @@ async def call_api(update: Update, context: CallbackContext) -> None:
     if response.status_code == 200:
         try:
             content_type = response.headers.get('Content-Type', '').lower()
-            if 'image' in content_type:
-                # 推送图片
+
+            if 'json' in content_type:
+                # 如果是 JSON 格式
+                data = response.json()
+                formatted_json = json.dumps(data, indent=2)  # 格式化 JSON
+                await update.message.reply_text(f"API 返回的 JSON 数据：\n{formatted_json}")
+            
+            elif 'text' in content_type:
+                # 如果是纯文本格式
+                text_data = response.text
+                await update.message.reply_text(f"API 返回的文本数据：\n{text_data}")
+            
+            elif 'xml' in content_type:
+                # 如果是 XML 格式（假设需要解析 XML）
+                from lxml import etree
+                tree = etree.fromstring(response.content)
+                xml_data = etree.tostring(tree, pretty_print=True).decode("utf-8")
+                await update.message.reply_text(f"API 返回的 XML 数据：\n{xml_data}")
+
+            elif 'image' in content_type:
+                # 如果是图片
                 image = Image.open(BytesIO(response.content))
                 bio = BytesIO()
                 bio.name = f"{name}.png"
                 image.save(bio, 'PNG')
                 bio.seek(0)
                 await context.bot.send_photo(chat_id=update.effective_user.id, photo=bio, caption=f"API {name} 返回的图片")
+            
             elif 'video' in content_type:
-                # 推送视频
+                # 如果是视频
                 bio = BytesIO(response.content)
                 bio.name = f"{name}.mp4"
                 await context.bot.send_video(chat_id=update.effective_user.id, video=bio, caption=f"API {name} 返回的视频")
+            
             elif 'audio' in content_type:
-                # 推送音频
+                # 如果是音频
                 bio = BytesIO(response.content)
                 bio.name = f"{name}.mp3"
                 await context.bot.send_audio(chat_id=update.effective_user.id, audio=bio, caption=f"API {name} 返回的音频")
+            
             elif 'application' in content_type or 'octet-stream' in content_type:
-                # 推送文件
+                # 如果是文件（例如 PDF 或其他二进制数据）
                 bio = BytesIO(response.content)
                 bio.name = f"{name}_file"
                 await context.bot.send_document(chat_id=update.effective_user.id, document=bio, caption=f"API {name} 返回的文件")
-            elif 'text' in content_type or 'json' in content_type:
-                # 处理文本或 JSON
-                data = response.json() if 'json' in content_type else response.text
-                await update.message.reply_text(f"API 返回:\n{json.dumps(data, indent=2) if isinstance(data, dict) else data}")
+            
             else:
-                await update.message.reply_text(f"未知内容类型: {content_type}")
+                await update.message.reply_text(f"未知的内容类型: {content_type}")
+
         except Exception as e:
             await update.message.reply_text(f"API 数据处理失败: {str(e)}")
     else:
         await update.message.reply_text(f"API 调用失败，状态码: {response.status_code}")
-
-# 管理群组屏蔾
-async def block_api(update: Update, context: CallbackContext) -> None:
-    if update.effective_chat.type != "group":
-        await update.message.reply_text("此命令只能在群组中使用。")
-        return
-    args = context.args
-    if len(args) < 1:
-        await update.message.reply_text("用法: /block_api <API名称>")
-        return
-    group_id = str(update.effective_chat.id)
-    api_name = args[0]
-
-    if group_id not in group_settings:
-        group_settings[group_id] = {}
-
-    # 将 API 名称加入到屏蔾列表
-    if api_name not in group_settings[group_id]:
-        group_settings[group_id][api_name] = "blocked"
-        await update.message.reply_text(f"API {api_name} 已被屏蔾！")
-    else:
-        await update.message.reply_text(f"API {api_name} 已经在屏蔾列表中！")
-
-async def unblock_api(update: Update, context: CallbackContext) -> None:
-    if update.effective_chat.type != "group":
-        await update.message.reply_text("此命令只能在群组中使用。")
-        return
-    args = context.args
-    if len(args) < 1:
-        await update.message.reply_text("用法: /unblock_api <API名称>")
-        return
-    group_id = str(update.effective_chat.id)
-    api_name = args[0]
-
-    if group_id in group_settings and api_name in group_settings[group_id]:
-        del group_settings[group_id][api_name]
-        await update.message.reply_text(f"API {api_name} 已解除屏蔾！")
-    else:
-        await update.message.reply_text(f"API {api_name} 不在屏蔾列表中！")
 
 # FastAPI 设置 webhook
 app = FastAPI()
@@ -186,7 +166,7 @@ if __name__ == "__main__":
 
     # 设置 Webhook URL
     bot = Bot(token=token)
-    bot.set_webhook(url=webhook_url)  # 设置 Webhook URL（此处只调用一次）
+    await bot.set_webhook(url=webhook_url)  # 确保调用异步的 set_webhook 方法
 
     # 不使用轮询，只使用 Webhook
     app = ApplicationBuilder().token(token).build()
@@ -195,7 +175,6 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("add_api", add_api))
     app.add_handler(CommandHandler("remove_api", remove_api))
     app.add_handler(CommandHandler("call_api", call_api))
-    app.add_handler(CommandHandler("block_api", block_api))
-    app.add_handler(CommandHandler("unblock_api", unblock_api))
-
-    # 只使用 Webhook，不再调用 app.run_polling()
+    
+    # 启动 Telegram Bot 处理命令
+    app.run_polling()

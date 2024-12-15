@@ -1,7 +1,8 @@
 requests
-sqlalchemy
-Pillow
+pillow
+lxml
 python-telegram-bot
 fastapi
 uvicorn
+
 
