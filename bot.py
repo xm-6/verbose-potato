@@ -26,7 +26,7 @@ if not webhook_url:
 user_apis = {}
 
 # 初始化 Bot 实例
-app = ApplicationBuilder().token(token).build()
+application = ApplicationBuilder().token(token).build()
 
 # Telegram Bot 逻辑
 async def start(update: Update, context: CallbackContext) -> None:
@@ -168,10 +168,10 @@ async def webhook(request: Request):
     payload = await request.json()
     
     # 使用 Application 类处理更新
-    update = Update.de_json(payload, app.bot)
+    update = Update.de_json(payload, application.bot)
     
     # 使用 Application 处理更新
-    await app.process_update(update)
+    await application.process_update(update)
     
     return {"status": "ok"}
 
@@ -179,7 +179,7 @@ async def webhook(request: Request):
 if __name__ == "__main__":
     # 设置 Webhook URL
     webhook_url = os.getenv('WEBHOOK_URL', 'https://your-app-name.onrender.com/webhook')  # 获取部署后的 URL
-    asyncio.run(app.bot.set_webhook(url=webhook_url))
+    asyncio.run(application.bot.set_webhook(url=webhook_url))  # 设置 Webhook
     
     # 启动 Uvicorn 服务器
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv('PORT', 8000)))  # 使用 Render 提供的端口
