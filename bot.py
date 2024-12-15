@@ -30,6 +30,19 @@ group_settings = {}
 async def start(update: Update, context: CallbackContext) -> None:
     await update.message.reply_text("欢迎使用电报机器人！输入 /add_api 绑定 API，/remove_api 删除 API，/call_api 调用 API，/block_api 和 /unblock_api 管理群组屏蔾。")
 
+async def help(update: Update, context: CallbackContext) -> None:
+    help_text = (
+        "欢迎使用本 Bot！以下是您可以使用的命令：\n\n"
+        "/start - 启动 Bot\n"
+        "/help - 查看帮助信息\n"
+        "/add_api <名称> <API_URL> - 绑定一个 API\n"
+        "/remove_api <名称> - 删除已绑定的 API\n"
+        "/call_api <名称> - 调用已绑定的 API\n"
+        "/block_api <API名称> - 屏蔾某个 API（仅群组有效）\n"
+        "/unblock_api <API名称> - 解除对某个 API 的屏蔾（仅群组有效）\n"
+    )
+    await update.message.reply_text(help_text)
+
 async def add_api(update: Update, context: CallbackContext) -> None:
     args = context.args
     if len(args) < 2:
@@ -164,7 +177,6 @@ async def webhook(request: Request):
 
 # 启动应用
 def run():
-    # 启动 FastAPI 服务器
     uvicorn.run(app, host="0.0.0.0", port=8000)
 
 if __name__ == "__main__":
@@ -172,18 +184,18 @@ if __name__ == "__main__":
     thread = Thread(target=run)
     thread.start()
 
-    # 启动 Telegram Bot Webhook
+    # 设置 Webhook URL
     bot = Bot(token=token)
-    bot.set_webhook(url=webhook_url)
+    bot.set_webhook(url=webhook_url)  # 设置 Webhook URL（此处只调用一次）
 
-    # 启动 Telegram Bot 轮询
+    # 不使用轮询，只使用 Webhook
     app = ApplicationBuilder().token(token).build()
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help))  # 添加 help 命令
     app.add_handler(CommandHandler("add_api", add_api))
     app.add_handler(CommandHandler("remove_api", remove_api))
     app.add_handler(CommandHandler("call_api", call_api))
     app.add_handler(CommandHandler("block_api", block_api))
     app.add_handler(CommandHandler("unblock_api", unblock_api))
 
-    # 启动 Telegram Bot 轮询
-    app.run_polling()
+    # 只使用 Webhook，不再调用 app.run_polling()
